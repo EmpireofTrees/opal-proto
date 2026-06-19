@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>EXP-001 · opal cut/grind/score loop</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #0e0f12; color: #d7d9de;
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+  }
+  header { padding: 14px 20px 4px; }
+  header h1 { font-size: 15px; margin: 0; font-weight: 600; letter-spacing: .02em; }
+  header p { margin: 4px 0 0; color: #8b8f98; font-size: 12px; }
+  .wrap { display: flex; gap: 22px; padding: 14px 20px 30px; align-items: flex-start; flex-wrap: wrap; }
+  .stage { display: flex; flex-direction: column; gap: 10px; flex: 1 1 360px; min-width: 270px; max-width: 460px; }
+  canvas { display: block; background: #16181d; border-radius: 6px; cursor: crosshair; touch-action: none; width: 100%; max-width: 440px; height: auto; }
+  .caption { font-size: 11px; color: #777b84; }
+  .panel { flex: 1 1 300px; min-width: 260px; max-width: 360px; display: flex; flex-direction: column; gap: 16px; }
+  .card { background: #16181d; border: 1px solid #23262d; border-radius: 8px; padding: 12px 14px; }
+  .card h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #8b8f98; margin: 0 0 10px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  button {
+    background: #23262d; color: #d7d9de; border: 1px solid #30343c; border-radius: 6px;
+    padding: 7px 11px; font-size: 13px; cursor: pointer;
+  }
+  button:hover { background: #2b2f37; }
+  button.on { background: #2f4a3a; border-color: #3f6b50; color: #b6f0c8; }
+  button.brush.sel { background: #34405a; border-color: #4a5d82; color: #c2d4ff; }
+  label.sl { display: block; font-size: 12px; color: #aab; margin-bottom: 4px; }
+  input[type=range] { width: 100%; }
+  input[type=text] { background:#0e0f12; border:1px solid #30343c; color:#d7d9de; border-radius:6px; padding:6px 8px; width:120px; }
+  .scores { display: grid; grid-template-columns: 1fr auto auto auto; gap: 6px 10px; align-items: baseline; }
+  .scores .hd { font-size: 11px; color: #777b84; text-transform: uppercase; letter-spacing: .06em; }
+  .scores .big { font-size: 22px; font-weight: 700; }
+  .scores .you { color: #c2d4ff; }
+  .scores .par { color: #b6f0c8; }
+  .scores .flat { color: #e6c98a; }
+  .breakdown { display: grid; grid-template-columns: 1fr auto; gap: 3px 10px; font-size: 12px; margin-top: 10px; color: #aab; }
+  .breakdown .v { color: #d7d9de; font-variant-numeric: tabular-nums; }
+  .verdict { margin-top: 10px; font-size: 12px; padding: 8px 10px; border-radius: 6px; background: #1b1e24; }
+  code { background:#1b1e24; padding:1px 5px; border-radius:4px; font-size:12px; }
+  .legend { display:flex; gap:12px; flex-wrap:wrap; font-size:11px; color:#888; }
+  .sw { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:4px; vertical-align:-1px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>EXP-001 — art-free cut / grind / score loop <span style="color:#5b5f68;font-weight:400;font-size:11px;">build 20260619-092755</span></h1>
+  <p>Read the rough (perimeter walls + cue sheen + the cross-section you uncover), grind to the band, don't grind through it. No undo. Goal: get as close to <b>Par</b> as you can.</p>
+</header>
+
+<div class="wrap">
+  <div class="stage">
+    <canvas id="face" width="440" height="360"></canvas>
+    <div class="caption">Top-down face. Click &amp; drag to grind one layer. Brighter / more saturated = better color. <span id="hoverInfo"></span></div>
+    <canvas id="xsec" width="440" height="210"></canvas>
+    <div class="caption">Cross-section of the hovered row — you only see what you've uncovered or what's at an edge (hatched = still hidden).</div>
+    <div class="legend">
+      <span><span class="sw" style="background:#7a674a"></span>skin (remove)</span>
+      <span><span class="sw" style="background:#b07bd6"></span>opal (keep)</span>
+      <span><span class="sw" style="background:#2c2c30"></span>potch (worthless)</span>
+      <span><span class="sw" style="background:#241c14"></span>matrix</span>
+    </div>
+  </div>
+
+  <div class="panel">
+    <div class="card">
+      <h2>Stone</h2>
+      <div class="row">
+        <button id="newStone">New stone</button>
+        <button id="replay">Replay seed</button>
+        <button id="truth">Reveal truth</button>
+      </div>
+      <div class="row" style="margin-top:10px;">
+        <input type="text" id="seedInput" placeholder="seed" />
+        <button id="loadSeed">Load</button>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Tools</h2>
+      <div class="row">
+        <span style="font-size:12px;color:#aab;">Brush</span>
+        <button class="brush" data-b="1">1</button>
+        <button class="brush sel" data-b="3">3</button>
+        <button class="brush" data-b="5">5</button>
+      </div>
+      <div style="margin-top:12px;">
+        <label class="sl">Cue strength (Q3 telegraph dial) — <span id="cueVal">0.45</span></label>
+        <input type="range" id="cue" min="0" max="1" step="0.05" value="0.45" />
+        <div class="caption">0 = slot machine (edges only) · 1 = x-ray (solved)</div>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Score</h2>
+      <div class="scores">
+        <span></span><span class="hd">you</span><span class="hd">par</span><span class="hd">flat</span>
+        <span class="hd" style="align-self:center;">value $</span>
+        <span class="big you" id="vYou">0</span>
+        <span class="big par" id="vPar">0</span>
+        <span class="big flat" id="vFlat">0</span>
+      </div>
+      <div class="breakdown">
+        <span>Contiguous opal face</span><span class="v" id="bFace">0</span>
+        <span>Total opal exposed</span><span class="v" id="bTotal">0</span>
+        <span>Avg color (0–100)</span><span class="v" id="bColor">0</span>
+        <span>Cleanliness</span><span class="v" id="bClean">0%</span>
+        <span>Opal destroyed (waste)</span><span class="v" id="bDestroyed">0</span>
+        <span>You vs Par</span><span class="v" id="bPct">—</span>
+      </div>
+      <div class="verdict" id="verdict"></div>
+      <div class="row" style="margin-top:10px;">
+        <button id="copyFb">📋 Copy result for feedback</button>
+        <span id="copyOk" class="caption" style="color:#b6f0c8;"></span>
+      </div>
+      <div class="caption" style="margin-top:8px;">value = sizeScore × (0.4 + 0.6·color) × (0.5 + 0.5·clean) × 12 − destroyed·18</div>
+    </div>
+  </div>
+</div>
+
+<script src="game.js?v=20260619-092755"></script>
+<script>
+const S = window.OpalSim;
+const W = 22, H = 18, D = 14;
+const CS = 20;            // face cell size (px)
+const DC = 14;            // depth cell height in cross-section (px)
+
+const face = document.getElementById('face');
+const fx = face.getContext('2d');
+const xsec = document.getElementById('xsec');
+const xc = xsec.getContext('2d');
+face.width = W * CS; face.height = H * CS;
+xsec.width = W * CS; xsec.height = D * DC;
+
+let stone, grind, par, flat, cueStrength = 0.45, brush = 3, showTruth = false, hoverRow = -1, hoverCol = -1;
+
+function freshGrind() { return Array.from({length: H}, () => new Array(W).fill(0)); }
+
+function rndSeed() {
+  // browser-side randomness is fine here (this is the prototype, not a workflow script)
+  return Math.random().toString(36).slice(2, 9);
+}
+
+function loadStone(seed) {
+  stone = S.generateStone(seed, W, H, D);
+  grind = freshGrind();
+  par = S.parState(stone);
+  flat = S.flatBest(stone);
+  document.getElementById('seedInput').value = seed;
+  redraw();
+}
+
+// ---------- colors ----------
+function colSkin(x, y) {
+  const t = ((x * 7 + y * 13) % 5) / 5;
+  const l = 92 + t * 28;
+  return `rgb(${l},${Math.round(l*0.85)},${Math.round(l*0.58)})`;
+}
+function colOpal(col, x, y) {
+  const q = col.q;
+  const hue = (col.hue * 360 + q * 130 + (x + y) * 5) % 360;
+  const sat = 22 + 68 * q;
+  const light = 26 + 38 * q;
+  return `hsl(${hue}, ${sat}%, ${light}%)`;
+}
+function matColor(m, col, x, y) {
+  if (m === S.SKIN) return colSkin(x, y);
+  if (m === S.OPAL) return colOpal(col, x, y);
+  if (m === S.POTCH) return '#2c2c30';
+  if (m === S.MATRIX) return '#241c14';
+  return '#0e0f12';
+}
+
+// progressive-reveal visibility for the cross-section
+function revealed(x, y, d) {
+  if (x === 0 || y === 0 || x === W - 1 || y === H - 1) return true; // perimeter walls
+  if (grind[y][x] >= d) return true;                                 // you ground through it
+  if (grind[y][x+1] >= d || grind[y][x-1] >= d || grind[y+1][x] >= d || grind[y-1][x] >= d) return true; // pit wall
+  return false;
+}
+
+// ---------- rendering ----------
+function redraw() {
+  // top-down face
+  for (let y = 0; y < H; y++) {
+    for (let x = 0; x < W; x++) {
+      const g = grind[y][x];
+      const col = stone.cols[y][x];
+      const m = S.materialAt(stone, x, y, g);
+      fx.fillStyle = matColor(m, col, x, y);
+      fx.fillRect(x * CS, y * CS, CS, CS);
+
+      // cue sheen on un-cut skin: hints opal presence/shallowness
+      if (m === S.SKIN && cueStrength > 0) {
+        const sh = S.opalShallowness(stone, x, y);
+        if (sh > 0) {
+          fx.fillStyle = `rgba(130,220,255,${(cueStrength * sh * 0.5).toFixed(3)})`;
+          fx.fillRect(x * CS, y * CS, CS, CS);
+          if (cueStrength > 0.5) { // high cue also tints toward quality
+            fx.fillStyle = `hsla(${(col.hue*360 + col.q*130)%360},70%,55%,${((cueStrength-0.5)*sh*0.5).toFixed(3)})`;
+            fx.fillRect(x * CS, y * CS, CS, CS);
+          }
+        }
+      }
+      // truth overlay: mark the ideal stop (band top) for opal columns
+      if (showTruth && !col.dead) {
+        fx.strokeStyle = 'rgba(182,240,200,0.7)';
+        fx.lineWidth = g === col.bandTop ? 2 : 0.5;
+        fx.strokeRect(x * CS + 1, y * CS + 1, CS - 2, CS - 2);
+      }
+      fx.strokeStyle = 'rgba(0,0,0,0.18)';
+      fx.lineWidth = 1;
+      fx.strokeRect(x * CS + 0.5, y * CS + 0.5, CS, CS);
+    }
+  }
+  // hover brush outline
+  if (hoverCol >= 0) {
+    const r = (brush - 1) / 2;
+    fx.strokeStyle = 'rgba(255,255,255,0.6)';
+    fx.lineWidth = 1.5;
+    fx.strokeRect((hoverCol - r) * CS, (hoverRow - r) * CS, brush * CS, brush * CS);
+  }
+  drawXsec();
+  updateScore();
+}
+
+function drawXsec() {
+  xc.clearRect(0, 0, xsec.width, xsec.height);
+  if (hoverRow < 0) {
+    xc.fillStyle = '#777b84'; xc.font = '12px sans-serif';
+    xc.fillText('hover the face to inspect a row…', 12, 22);
+    return;
+  }
+  const y = hoverRow;
+  for (let x = 0; x < W; x++) {
+    const col = stone.cols[y][x];
+    for (let d = 0; d < D; d++) {
+      const px = x * CS, py = d * DC;
+      const ground = grind[y][x] > d;
+      if (ground) { xc.fillStyle = '#0e0f12'; xc.fillRect(px, py, CS, DC); continue; }
+      const vis = showTruth || revealed(x, y, d);
+      if (vis) {
+        const m = S.materialAt(stone, x, y, d);
+        xc.fillStyle = matColor(m, col, x, y);
+        xc.fillRect(px, py, CS, DC);
+      } else {
+        // hidden: hatch
+        xc.fillStyle = '#1a1c22'; xc.fillRect(px, py, CS, DC);
+        xc.strokeStyle = '#26282f'; xc.lineWidth = 1;
+        xc.beginPath(); xc.moveTo(px, py + DC); xc.lineTo(px + CS, py); xc.stroke();
+      }
+      xc.strokeStyle = 'rgba(0,0,0,0.25)'; xc.lineWidth = 0.5;
+      xc.strokeRect(px + 0.5, py + 0.5, CS, DC);
+    }
+    // current grind surface marker
+    const gd = grind[y][x];
+    if (gd < D) {
+      xc.fillStyle = 'rgba(255,255,255,0.5)';
+      xc.fillRect(x * CS, gd * DC - 1, CS, 2);
+    }
+  }
+  if (hoverCol >= 0) {
+    xc.strokeStyle = 'rgba(255,255,255,0.5)'; xc.lineWidth = 1.5;
+    xc.strokeRect(hoverCol * CS, 0, CS, xsec.height);
+  }
+}
+
+function updateScore() {
+  const s = S.scoreState(stone, grind);
+  document.getElementById('vYou').textContent = s.value;
+  document.getElementById('vPar').textContent = par.value;
+  document.getElementById('vFlat').textContent = flat.value;
+  document.getElementById('bFace').textContent = s.face;
+  document.getElementById('bTotal').textContent = s.totalOpal;
+  document.getElementById('bColor').textContent = Math.round(s.avgColor * 100);
+  document.getElementById('bClean').textContent = Math.round(s.cleanliness * 100) + '%';
+  document.getElementById('bDestroyed').textContent = s.destroyed;
+  const pct = par.value ? Math.round(100 * s.value / par.value) : 0;
+  document.getElementById('bPct').textContent = pct + '%';
+
+  const v = document.getElementById('verdict');
+  const headroom = par.value - flat.value;
+  let msg = `Skill headroom on this seed: Par ${par.value} vs Flat ${flat.value} ` +
+            `(<b>${headroom > 0 ? '+' : ''}${headroom}</b>). `;
+  if (s.value > flat.value) msg += `You're beating the naive flat grind by ${s.value - flat.value}. ✅`;
+  else if (s.value === 0) msg += `Start grinding.`;
+  else msg += `Still below the naive flat baseline — read the band closer.`;
+  v.innerHTML = msg;
+}
+
+// ---------- interaction ----------
+let painting = false, stroke = new Set();
+function cellFromEvent(e) {
+  const r = face.getBoundingClientRect();
+  const x = Math.floor((e.clientX - r.left) / (r.width / W));
+  const y = Math.floor((e.clientY - r.top) / (r.height / H));
+  return { x: Math.max(0, Math.min(W - 1, x)), y: Math.max(0, Math.min(H - 1, y)) };
+}
+function grindAt(cx, cy) {
+  const r = (brush - 1) / 2;
+  for (let dy = -r; dy <= r; dy++) for (let dx = -r; dx <= r; dx++) {
+    const x = cx + dx, y = cy + dy;
+    if (x < 0 || x >= W || y < 0 || y >= H) continue;
+    const key = y * W + x;
+    if (stroke.has(key)) continue;
+    stroke.add(key);
+    if (grind[y][x] < D) grind[y][x]++;
+  }
+}
+face.addEventListener('pointerdown', (e) => {
+  painting = true; stroke = new Set();
+  const { x, y } = cellFromEvent(e); hoverCol = x; hoverRow = y;
+  grindAt(x, y); redraw(); face.setPointerCapture(e.pointerId);
+});
+face.addEventListener('pointermove', (e) => {
+  const { x, y } = cellFromEvent(e); hoverCol = x; hoverRow = y;
+  const col = stone.cols[y][x];
+  document.getElementById('hoverInfo').textContent =
+    showTruth ? `(truth: band ${col.dead ? 'none' : col.bandTop + '–' + col.bandBot}, q ${Math.round(col.q*100)})` : '';
+  if (painting) grindAt(x, y);
+  redraw();
+});
+function endStroke() { painting = false; }
+face.addEventListener('pointerup', endStroke);
+face.addEventListener('pointerleave', () => { if (!painting) { hoverCol = hoverRow = -1; redraw(); } });
+window.addEventListener('pointerup', endStroke);
+
+// ---------- controls ----------
+document.getElementById('newStone').onclick = () => loadStone(rndSeed());
+document.getElementById('replay').onclick = () => { grind = freshGrind(); redraw(); };
+document.getElementById('loadSeed').onclick = () => loadStone(document.getElementById('seedInput').value || rndSeed());
+document.getElementById('truth').onclick = (e) => { showTruth = !showTruth; e.target.classList.toggle('on', showTruth); redraw(); };
+document.getElementById('cue').oninput = (e) => { cueStrength = +e.target.value; document.getElementById('cueVal').textContent = cueStrength.toFixed(2); redraw(); };
+document.querySelectorAll('button.brush').forEach((b) => b.onclick = () => {
+  brush = +b.dataset.b;
+  document.querySelectorAll('button.brush').forEach((o) => o.classList.toggle('sel', o === b));
+});
+
+document.getElementById('copyFb').onclick = async () => {
+  const s = S.scoreState(stone, grind);
+  const pct = par.value ? Math.round(100 * s.value / par.value) : 0;
+  const txt =
+`EXP-001 build 20260619-092755
+seed=${stone.seed}  cue=${cueStrength.toFixed(2)}  brush=${brush}
+You=${s.value}  Par=${par.value}  Flat=${flat.value}  (You/Par ${pct}%)
+face=${s.face}  totalOpal=${s.totalOpal}  color=${Math.round(s.avgColor*100)}  clean=${Math.round(s.cleanliness*100)}%  destroyed=${s.destroyed}
+--- my notes: `;
+  const ok = document.getElementById('copyOk');
+  try { await navigator.clipboard.writeText(txt); ok.textContent = 'copied — paste it back to me'; }
+  catch (e) { ok.textContent = 'select & copy:'; prompt('Copy this:', txt); }
+  setTimeout(() => { ok.textContent = ''; }, 4000);
+};
+
+loadStone(rndSeed());
+</script>
+</body>
+</html>
