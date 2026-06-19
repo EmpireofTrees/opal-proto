@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>EXP-003 · 3D opal volume carve</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #0a0b0e; color: #cfd2d8;
+    font: 13px/1.4 ui-sans-serif, system-ui, -apple-system, sans-serif; overflow: hidden; }
+  #c { display: block; width: 100vw; height: 100vh; touch-action: none; }
+  .top { position: fixed; top: 0; left: 0; right: 0; padding: 9px 12px; display: flex; gap: 10px; align-items: center;
+    justify-content: space-between; background: linear-gradient(rgba(0,0,0,0.55), transparent); pointer-events: none; }
+  .top b { font-weight: 600; } .top .sub { color: #7d818b; font-size: 11px; }
+  .hud { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+    background: linear-gradient(transparent, rgba(0,0,0,0.7)); display: flex; flex-direction: column; gap: 10px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  button { background: #1b1e24; color: #cfd2d8; border: 1px solid #30343c; border-radius: 8px; padding: 9px 13px; font-size: 13px; pointer-events: auto; }
+  button.on { background: #2f4a3a; border-color: #3f6b50; color: #b6f0c8; }
+  .seg { display: inline-flex; border: 1px solid #30343c; border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; }
+  .seg button.sel { background: #34405a; color: #c2d4ff; }
+  .score { display: flex; gap: 14px; font-size: 12px; color: #9aa; flex-wrap: wrap; pointer-events: none; }
+  .score b { color: #e6e8ec; font-variant-numeric: tabular-nums; }
+  .score .opal { color: #c9a6ff; } .score .waste { color: #e69090; }
+  label.sl { font-size: 11px; color: #9aa; display:flex; align-items:center; gap:6px; }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="top"><b>EXP-003 — 3D opal carve · <span class="sub">build 20260619-100035</span></b><span class="sub" id="hint">drag to rotate</span></div>
+<div class="hud">
+  <div class="score">
+    <span>exposed opal <b class="opal" id="sOpal">0</b></span>
+    <span>avg color <b id="sColor">0</b></span>
+    <span>destroyed <b class="waste" id="sWaste">0</b></span>
+    <span>value <b id="sVal">0</b></span>
+  </div>
+  <div class="row">
+    <span class="seg">
+      <button id="mRot" class="sel">⟳ Rotate</button>
+      <button id="mGrind">⛏ Grind</button>
+    </span>
+    <label class="sl">brush <input id="brush" type="range" min="0" max="3" step="1" value="1" style="width:80px"></label>
+    <button id="xray">👁 X-ray opal</button>
+    <button id="replay">↺ Replay</button>
+    <button id="newStone">＋ New rough</button>
+  </div>
+</div>
+
+<script src="gen.js"></script>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js" } }
+</script>
+<script type="module">
+import * as THREE from 'three';
+const G = globalThis.OpalGen;
+const N = 22;
+
+const canvas = document.getElementById('c');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(2, devicePixelRatio || 1));
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0b0e);
+const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1000);
+camera.position.set(0, 0, N * 2.0);
+
+scene.add(new THREE.HemisphereLight(0xbfc6d6, 0x202028, 1.1));
+const dir = new THREE.DirectionalLight(0xffffff, 1.3); dir.position.set(1, 1.4, 1.2); scene.add(dir);
+const dir2 = new THREE.DirectionalLight(0x8090c0, 0.5); dir2.position.set(-1, -0.5, -1); scene.add(dir2);
+
+const group = new THREE.Group(); scene.add(group);
+const geo = new THREE.BoxGeometry(1, 1, 1);
+const mat = new THREE.MeshLambertMaterial();
+let mesh = null, surfaceIndex = [], destroyed = 0, xrayOn = false;
+let vol, origMat, origQual;
+const center = (N - 1) / 2;
+const dummy = new THREE.Object3D();
+const col = new THREE.Color();
+
+function colorFor(m, q) {
+  if (m === G.SKIN) return col.setHSL(0.09, 0.35, 0.34);
+  if (m === G.OPAL) return col.setHSL((0.5 + q * 0.55) % 1, 0.55 + 0.4 * q, 0.30 + 0.40 * q);
+  if (m === G.POTCH) return col.setRGB(0.17, 0.17, 0.20);
+  return col.setRGB(0.14, 0.11, 0.08); // matrix
+}
+
+function loadVolume(seed) {
+  vol = G.generateVolume(seed, N);
+  origMat = vol.mat.slice(); origQual = vol.qual.slice();
+  destroyed = 0;
+  rebuild();
+}
+function replay() { vol.mat.set(origMat); vol.qual.set(origQual); destroyed = 0; rebuild(); }
+
+function rebuild() {
+  const present = []; // indices to draw
+  for (let z = 0; z < N; z++) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+    const idx = x + N * (y + N * z);
+    const m = vol.mat[idx];
+    if (m === G.EMPTY) continue;
+    if (xrayOn) { if (m === G.OPAL || true) present.push([idx, x, y, z, m]); }
+    else if (G.isSurface(vol, x, y, z)) present.push([idx, x, y, z, m]);
+  }
+  if (!mesh || mesh.userData.max < present.length) {
+    if (mesh) { group.remove(mesh); mesh.dispose(); }
+    const max = Math.max(present.length, 4000);
+    mesh = new THREE.InstancedMesh(geo, mat, max);
+    mesh.userData.max = max; mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    group.add(mesh);
+  }
+  surfaceIndex = [];
+  let i = 0, opalCount = 0, sumQ = 0;
+  for (const [idx, x, y, z, m] of present) {
+    dummy.position.set(x - center, y - center, z - center);
+    dummy.updateMatrix();
+    mesh.setMatrixAt(i, dummy.matrix);
+    let c;
+    if (xrayOn && m !== G.OPAL) c = col.setRGB(0.05, 0.05, 0.06);
+    else c = colorFor(m, vol.qual[idx]);
+    mesh.setColorAt(i, c);
+    surfaceIndex[i] = idx;
+    if (m === G.OPAL) { opalCount++; sumQ += vol.qual[idx]; }
+    i++;
+  }
+  mesh.count = i;
+  mesh.instanceMatrix.needsUpdate = true;
+  if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  updateScore(opalCount, sumQ);
+}
+
+function updateScore(opalCount, sumQ) {
+  const avgQ = opalCount ? sumQ / opalCount : 0;
+  const value = Math.max(0, Math.round(opalCount * (0.4 + 0.6 * avgQ) * 4 - destroyed * 8));
+  document.getElementById('sOpal').textContent = xrayOn ? '(x-ray)' : opalCount;
+  document.getElementById('sColor').textContent = Math.round(avgQ * 100);
+  document.getElementById('sWaste').textContent = destroyed;
+  document.getElementById('sVal').textContent = xrayOn ? '—' : value;
+}
+
+// ---- carving ----
+const ray = new THREE.Raycaster();
+let brush = 1;
+function carveAt(clientX, clientY) {
+  const r = canvas.getBoundingClientRect();
+  const ndc = new THREE.Vector2(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hit = ray.intersectObject(mesh)[0];
+  if (!hit) return;
+  const idx = surfaceIndex[hit.instanceId];
+  const cx = idx % N, cy = Math.floor(idx / N) % N, cz = Math.floor(idx / (N * N));
+  let changed = false;
+  for (let z = cz - brush; z <= cz + brush; z++)
+    for (let y = cy - brush; y <= cy + brush; y++)
+      for (let x = cx - brush; x <= cx + brush; x++) {
+        if (x<0||y<0||z<0||x>=N||y>=N||z>=N) continue;
+        if ((x-cx)**2 + (y-cy)**2 + (z-cz)**2 > brush*brush + 0.5) continue;
+        const vi = x + N * (y + N * z);
+        if (vol.mat[vi] === G.EMPTY) continue;
+        if (vol.mat[vi] === G.OPAL) destroyed++;
+        vol.mat[vi] = G.EMPTY; changed = true;
+      }
+  if (changed) rebuild();
+}
+
+// ---- input: rotate vs grind, pinch zoom ----
+let mode = 'rotate', pdown = false, last = null;
+const pointers = new Map();
+canvas.addEventListener('pointerdown', e => {
+  canvas.setPointerCapture(e.pointerId); pointers.set(e.pointerId, [e.clientX, e.clientY]);
+  pdown = true; last = [e.clientX, e.clientY];
+  if (mode === 'grind' && pointers.size === 1) carveAt(e.clientX, e.clientY);
+});
+canvas.addEventListener('pointermove', e => {
+  if (!pdown) return;
+  pointers.set(e.pointerId, [e.clientX, e.clientY]);
+  if (pointers.size >= 2) { pinch(); return; }
+  if (mode === 'grind') { carveAt(e.clientX, e.clientY); return; }
+  const dx = e.clientX - last[0], dy = e.clientY - last[1]; last = [e.clientX, e.clientY];
+  group.rotation.y += dx * 0.01;
+  group.rotation.x = Math.max(-1.4, Math.min(1.4, group.rotation.x + dy * 0.01));
+});
+function endP(e) { pointers.delete(e.pointerId); if (pointers.size === 0) pdown = false; lastPinch = 0; }
+canvas.addEventListener('pointerup', endP);
+canvas.addEventListener('pointercancel', endP);
+let lastPinch = 0;
+function pinch() {
+  const pts = [...pointers.values()];
+  const d = Math.hypot(pts[0][0]-pts[1][0], pts[0][1]-pts[1][1]);
+  if (lastPinch) { camera.position.z = Math.max(N*0.9, Math.min(N*3.5, camera.position.z * (lastPinch / d))); }
+  lastPinch = d;
+}
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  camera.position.z = Math.max(N*0.9, Math.min(N*3.5, camera.position.z * (1 + Math.sign(e.deltaY) * 0.1)));
+}, { passive: false });
+
+// ---- controls ----
+function setMode(m) {
+  mode = m;
+  document.getElementById('mRot').classList.toggle('sel', m === 'rotate');
+  document.getElementById('mGrind').classList.toggle('sel', m === 'grind');
+  document.getElementById('hint').textContent = m === 'rotate' ? 'drag to rotate · pinch/scroll to zoom' : 'drag on the rough to grind — no undo';
+}
+document.getElementById('mRot').onclick = () => setMode('rotate');
+document.getElementById('mGrind').onclick = () => setMode('grind');
+document.getElementById('brush').oninput = e => brush = +e.target.value;
+document.getElementById('xray').onclick = e => { xrayOn = !xrayOn; e.target.classList.toggle('on', xrayOn); rebuild(); };
+document.getElementById('replay').onclick = replay;
+document.getElementById('newStone').onclick = () => loadVolume('rock-' + Math.random().toString(36).slice(2, 9));
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
+}
+addEventListener('resize', resize); resize();
+loadVolume('rock-' + Math.random().toString(36).slice(2, 9));
+group.rotation.set(-0.3, 0.5, 0);
+
+(function animate() { requestAnimationFrame(animate); renderer.render(scene, camera); })();
+</script>
+</body>
+</html>

@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>EXP-002 · tilt harlequin opal</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #050608; color: #cfd2d8;
+    font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, sans-serif; overflow: hidden; }
+  #gl { display: block; width: 100vw; height: 100vh; touch-action: none; }
+  .hud { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 14px calc(12px + env(safe-area-inset-bottom));
+    background: linear-gradient(transparent, rgba(0,0,0,0.6)); display: flex; flex-direction: column; gap: 8px; }
+  .top { position: fixed; top: 0; left: 0; right: 0; padding: 10px 14px; display: flex; justify-content: space-between; align-items: center;
+    background: linear-gradient(rgba(0,0,0,0.5), transparent); pointer-events: none; }
+  .top b { font-weight: 600; }
+  .top span { color: #7d818b; font-size: 11px; }
+  .ctrl { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .ctrl label { font-size: 11px; color: #9aa; display: flex; flex-direction: column; gap: 2px; min-width: 90px; }
+  input[type=range] { width: 110px; }
+  button { background: #1b1e24; color: #cfd2d8; border: 1px solid #30343c; border-radius: 8px; padding: 9px 14px; font-size: 13px; pointer-events: auto; }
+  button.on { background: #2f4a3a; border-color: #3f6b50; color: #b6f0c8; }
+  #enable { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); padding: 14px 20px; z-index: 5; }
+  .seg { display: inline-flex; border: 1px solid #30343c; border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; border-radius: 0; }
+  .seg button.sel { background: #34405a; color: #c2d4ff; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div class="top"><b>EXP-002 — harlequin opal · build 20260619-100035</b><span id="mode">drag / move to tilt</span></div>
+<button id="enable">📱 Tap to enable tilt (motion)</button>
+<div class="hud">
+  <div class="ctrl">
+    <label>pattern scale <input id="scale" type="range" min="3" max="14" step="0.5" value="7"></label>
+    <label>flash <input id="flash" type="range" min="0" max="1" step="0.05" value="0.6"></label>
+    <label>body tone
+      <span class="seg">
+        <button data-tone="0" class="sel">black</button>
+        <button data-tone="1">white</button>
+      </span>
+    </label>
+  </div>
+</div>
+
+<script type="text/javascript">
+const cv = document.getElementById('gl');
+const gl = cv.getContext('webgl2', { antialias: true, alpha: false });
+if (!gl) { document.body.innerHTML = '<p style="padding:20px">WebGL2 not available on this device/browser.</p>'; }
+
+const VERT = `#version 300 es
+in vec2 p; void main(){ gl_Position = vec4(p,0.0,1.0); }`;
+
+const FRAG = `#version 300 es
+precision highp float;
+out vec4 fragColor;
+uniform vec2 uRes; uniform float uTime; uniform vec2 uTilt;
+uniform float uScale; uniform float uFlash; uniform float uTone;
+
+vec2 hash2(vec2 p){ p=vec2(dot(p,vec2(127.1,311.7)),dot(p,vec2(269.5,183.3))); return fract(sin(p)*43758.5453); }
+float hash1(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+vec3 pal(float t){ return 0.5+0.5*cos(6.28318*(t+vec3(0.0,0.33,0.67))); }
+
+void voronoi(vec2 x, out float id, out float edge){
+  vec2 n=floor(x), f=fract(x);
+  float f1=8.0; vec2 mr=vec2(0.0), mg=vec2(0.0);
+  for(int j=-1;j<=1;j++) for(int i=-1;i<=1;i++){
+    vec2 g=vec2(float(i),float(j));
+    vec2 o=0.5+0.5*sin(6.28318*hash2(n+g));
+    vec2 r=g+o-f; float d=dot(r,r);
+    if(d<f1){ f1=d; mr=r; mg=g; }
+  }
+  float f2=8.0;
+  for(int j=-2;j<=2;j++) for(int i=-2;i<=2;i++){
+    vec2 g=mg+vec2(float(i),float(j));
+    vec2 o=0.5+0.5*sin(6.28318*hash2(n+g));
+    vec2 r=g+o-f;
+    if(dot(mr-r,mr-r)>0.0001) f2=min(f2, dot(0.5*(mr+r), normalize(r-mr)));
+  }
+  id=hash1(n+mg); edge=f2;
+}
+
+void main(){
+  vec2 uv=(gl_FragCoord.xy-0.5*uRes)/min(uRes.x,uRes.y);
+  vec3 bg=vec3(0.035,0.04,0.05);
+  vec2 ab=vec2(0.62,0.46); vec2 q=uv/ab; float r2=dot(q,q);
+  if(r2>1.02){ fragColor=vec4(bg,1.0); return; }
+  float z=sqrt(max(0.0,1.0-min(r2,1.0)));
+  vec3 N=normalize(vec3(q.x/ab.x, q.y/ab.y, z*1.7));
+  vec3 V=normalize(vec3(uTilt*0.9,1.0));
+
+  vec2 pcoord=uv*uScale + uTilt*1.4 + N.xy*1.6;
+  float id,edge; voronoi(pcoord,id,edge);
+  float facetA=id*6.28318; vec2 facetDir=vec2(cos(facetA),sin(facetA));
+  float diffr=dot(N.xy+uTilt*1.3, facetDir)*0.9 + id;
+  float hue=fract(id*0.7 + diffr*0.65 + uTime*0.02);
+  vec3 color=pal(hue);
+  float align=dot(normalize(uTilt+1e-4), facetDir);
+  float flash=smoothstep(0.1,1.0,align)*uFlash + (1.0-uFlash*0.5);
+  color*=0.55+0.9*flash;
+  color=pow(color, vec3(0.8));
+  // body tone: black opal = dark potch between flashes; white opal = milky
+  float border=smoothstep(0.0,0.05,edge);
+  vec3 bodyDark=vec3(0.02,0.025,0.035);
+  vec3 bodyLight=vec3(0.72,0.74,0.78);
+  vec3 body=mix(bodyDark, bodyLight, uTone);
+  color=mix(body, color, border);
+  // dome shading + moving specular highlight
+  vec3 L=normalize(vec3(uTilt*1.6+vec2(0.15,0.45),1.25));
+  float diff=clamp(dot(N,L),0.0,1.0);
+  float spec=pow(clamp(dot(reflect(-L,N),V),0.0,1.0),48.0);
+  color=color*(0.45+0.75*diff)+spec*0.8;
+  float rim=pow(1.0-z,2.5); color+=rim*0.10*pal(uTime*0.05+0.3);
+  float aa=smoothstep(1.02,0.99,r2);
+  color=mix(bg,color,aa);
+  fragColor=vec4(color,1.0);
+}`;
+
+function compile(type, src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) console.error(gl.getShaderInfoLog(s)); return s; }
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, VERT));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FRAG));
+gl.linkProgram(prog);
+if(!gl.getProgramParameter(prog, gl.LINK_STATUS)) console.error(gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 3,-1, -1,3]), gl.STATIC_DRAW);
+const ploc = gl.getAttribLocation(prog,'p'); gl.enableVertexAttribArray(ploc);
+gl.vertexAttribPointer(ploc,2,gl.FLOAT,false,0,0);
+const U = n => gl.getUniformLocation(prog,n);
+const uRes=U('uRes'), uTime=U('uTime'), uTilt=U('uTilt'), uScale=U('uScale'), uFlash=U('uFlash'), uTone=U('uTone');
+
+let scale=7, flash=0.6, tone=0;
+let tilt=[0,0], target=[0,0];
+function resize(){ const dpr=Math.min(2,devicePixelRatio||1);
+  cv.width=innerWidth*dpr; cv.height=innerHeight*dpr; gl.viewport(0,0,cv.width,cv.height); }
+addEventListener('resize',resize); resize();
+
+// desktop pointer → tilt
+addEventListener('pointermove', e=>{ target=[(e.clientX/innerWidth-0.5)*2, -(e.clientY/innerHeight-0.5)*2]; });
+// mobile gyro
+let useGyro=false;
+function onOrient(e){ if(e.gamma==null) return; useGyro=true;
+  target=[Math.max(-1,Math.min(1,e.gamma/35)), Math.max(-1,Math.min(1,(e.beta-45)/35))];
+  document.getElementById('mode').textContent='gyro tilt active'; }
+const enableBtn=document.getElementById('enable');
+function startGyro(){
+  if(typeof DeviceOrientationEvent!=='undefined' && DeviceOrientationEvent.requestPermission){
+    DeviceOrientationEvent.requestPermission().then(s=>{ if(s==='granted') addEventListener('deviceorientation',onOrient); }).catch(()=>{});
+  } else { addEventListener('deviceorientation', onOrient); }
+  enableBtn.style.display='none';
+}
+enableBtn.onclick=startGyro;
+// hide the enable button on desktop (no touch)
+if(!('ontouchstart' in window)) enableBtn.style.display='none';
+
+document.getElementById('scale').oninput=e=>scale=+e.target.value;
+document.getElementById('flash').oninput=e=>flash=+e.target.value;
+document.querySelectorAll('[data-tone]').forEach(b=>b.onclick=()=>{
+  tone=+b.dataset.tone; document.querySelectorAll('[data-tone]').forEach(o=>o.classList.toggle('sel',o===b)); });
+
+const t0=performance.now();
+function frame(now){
+  const t=(now-t0)/1000;
+  // idle sway so it shimmers untouched
+  const idle=[Math.sin(t*0.6)*0.25, Math.cos(t*0.45)*0.2];
+  const tgt = useGyro ? target : [target[0]+idle[0]*0.5, target[1]+idle[1]*0.5];
+  tilt[0]+=(tgt[0]-tilt[0])*0.08; tilt[1]+=(tgt[1]-tilt[1])*0.08;
+  gl.uniform2f(uRes,cv.width,cv.height); gl.uniform1f(uTime,t);
+  gl.uniform2f(uTilt,tilt[0],tilt[1]); gl.uniform1f(uScale,scale);
+  gl.uniform1f(uFlash,flash); gl.uniform1f(uTone,tone);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
