@@ -37,7 +37,7 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<div class="top"><b>EXP-003 — plane-cutter carve · <span class="sub">build 20260619-124139</span></b><span class="sub" id="hint">drag = rotate (free spin) · press the pad up = grind · release to settle</span></div>
+<div class="top"><b>EXP-003 — plane-cutter carve · <span class="sub">build 20260619-130339</span></b><span class="sub" id="hint">1 finger = rotate · 2 fingers = pinch-zoom + twist-roll · pad = grind</span></div>
 
 <div id="feedctl">
   <div class="cap"><b>PRESS ▲</b></div>
@@ -202,19 +202,46 @@ function rotateBy(dx, dy) {
   _qd.setFromAxisAngle(_ax.set(0, 1, 0), dx * 0.01); group.quaternion.premultiply(_qd);
   _qd.setFromAxisAngle(_ax.set(1, 0, 0), dy * 0.01); group.quaternion.premultiply(_qd);
 }
-let pdown = false, last = null;
-canvas.addEventListener('pointerdown', e => { canvas.setPointerCapture(e.pointerId); pdown = true; last = [e.clientX, e.clientY]; });
-canvas.addEventListener('pointermove', e => {
-  if (!pdown) return;
-  const dx = e.clientX - last[0], dy = e.clientY - last[1]; last = [e.clientX, e.clientY];
-  rotateBy(dx, dy);
+const _fwd = new THREE.Vector3();
+function rollBy(dA) { camera.getWorldDirection(_fwd); _qd.setFromAxisAngle(_fwd, dA); group.quaternion.premultiply(_qd); }
+function zoomBy(scale) { camera.position.z = Math.max(R * 2, Math.min(R * 12, camera.position.z * scale)); }
+
+// multitouch: 1 finger = rotate (yaw/pitch), 2 fingers = pinch-zoom + twist-roll
+const ptrs = new Map();
+let rotLast = null, lastDist = 0, lastAng = 0;
+function twoMetrics() {
+  const a = [...ptrs.values()];
+  const dx = a[1].x - a[0].x, dy = a[1].y - a[0].y;
+  return { dist: Math.hypot(dx, dy) || 1, ang: Math.atan2(dy, dx) };
+}
+canvas.addEventListener('pointerdown', e => {
+  canvas.setPointerCapture(e.pointerId);
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (ptrs.size === 1) rotLast = [e.clientX, e.clientY];
+  else if (ptrs.size === 2) { const m = twoMetrics(); lastDist = m.dist; lastAng = m.ang; }
 });
-canvas.addEventListener('pointerup', () => { pdown = false; });
-canvas.addEventListener('pointercancel', () => { pdown = false; });
-canvas.addEventListener('wheel', e => {
-  e.preventDefault();
-  camera.position.z = Math.max(R * 2, Math.min(R * 12, camera.position.z * (1 + Math.sign(e.deltaY) * 0.1)));
-}, { passive: false });
+canvas.addEventListener('pointermove', e => {
+  if (!ptrs.has(e.pointerId)) return;
+  ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (ptrs.size === 1) {
+    const dx = e.clientX - rotLast[0], dy = e.clientY - rotLast[1]; rotLast = [e.clientX, e.clientY];
+    rotateBy(dx, dy);
+  } else if (ptrs.size >= 2) {
+    const m = twoMetrics();
+    zoomBy(lastDist / m.dist);
+    let dA = m.ang - lastAng; if (dA > Math.PI) dA -= 2 * Math.PI; if (dA < -Math.PI) dA += 2 * Math.PI;
+    rollBy(dA);
+    lastDist = m.dist; lastAng = m.ang;
+  }
+});
+function endPtr(e) {
+  ptrs.delete(e.pointerId);
+  if (ptrs.size === 1) { const a = [...ptrs.values()][0]; rotLast = [a.x, a.y]; }
+  else if (ptrs.size === 2) { const m = twoMetrics(); lastDist = m.dist; lastAng = m.ang; }
+}
+canvas.addEventListener('pointerup', endPtr);
+canvas.addEventListener('pointercancel', endPtr);
+canvas.addEventListener('wheel', e => { e.preventDefault(); zoomBy(1 + Math.sign(e.deltaY) * 0.1); }, { passive: false });
 
 // ---- physics feed pad ----
 const track = document.getElementById('feedtrack');
