@@ -21,21 +21,29 @@
   .score { display: flex; gap: 14px; font-size: 12px; color: #9aa; flex-wrap: wrap; pointer-events: none; }
   .score b { color: #e6e8ec; font-variant-numeric: tabular-nums; }
   .score .opal { color: #c9a6ff; } .score .waste { color: #e69090; }
-  /* vertical feed slider on the right */
-  .feed { position: fixed; right: 4px; top: 50%; transform: translateY(-50%); height: 260px; width: 54px;
-    display: flex; align-items: center; justify-content: center; pointer-events: none; }
-  .feed input { width: 230px; transform: rotate(-90deg); pointer-events: auto; accent-color: #8fb6ff; }
-  .feedlbl { position: fixed; right: 6px; top: calc(50% + 145px); transform: translateY(-50%); font-size: 10px; color: #7d818b; text-align: center; width: 50px; }
-  .feedtop { position: fixed; right: 6px; top: calc(50% - 145px); transform: translateY(-50%); font-size: 14px; color: #9aa; text-align: center; width: 50px; }
+
+  /* big custom physics feed control on the right */
+  #feedctl { position: fixed; right: 10px; top: 50%; transform: translateY(-50%);
+    width: 78px; height: 60vh; max-height: 460px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  #feedtrack { position: relative; flex: 1; width: 64px; border-radius: 36px; touch-action: none;
+    background: #15171c; border: 1px solid #2a2d35; overflow: hidden; box-shadow: inset 0 0 16px rgba(0,0,0,0.5); }
+  #feedfill { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(#7fa8ff, #3d63c8); opacity: 0.5; }
+  #feedthumb { position: absolute; left: 5px; right: 5px; height: 54px; border-radius: 28px; bottom: 0;
+    background: radial-gradient(circle at 50% 38%, #d8e2ff, #6f86c8); border: 1px solid #aab8e0; transform: translateY(50%);
+    box-shadow: 0 3px 10px rgba(0,0,0,0.5); }
+  #feedctl .cap { font-size: 11px; color: #9aa; text-align: center; line-height: 1.25; }
+  #feedctl .cap b { color: #cfd2d8; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div class="top"><b>EXP-003 — plane-cutter carve · <span class="sub">build 20260619-113837</span></b><span class="sub" id="hint">drag = rotate · slide up = grind a flat · pull feed back before re-orienting</span></div>
+<div class="top"><b>EXP-003 — plane-cutter carve · <span class="sub">build 20260619-124139</span></b><span class="sub" id="hint">drag = rotate (free spin) · press the pad up = grind · release to settle</span></div>
 
-<div class="feedtop">⊙ wheel</div>
-<div class="feed"><input id="feed" type="range" min="0" max="24" step="0.25" value="0" /></div>
-<div class="feedlbl">▲ feed<br>up = cut</div>
+<div id="feedctl">
+  <div class="cap"><b>PRESS ▲</b></div>
+  <div id="feedtrack"><div id="feedfill"></div><div id="feedthumb"></div></div>
+  <div class="cap">into wheel</div>
+</div>
 
 <div class="hud">
   <div class="score">
@@ -46,7 +54,7 @@
   </div>
   <div class="row">
     <button id="xray">👁 X-ray opal</button>
-    <button id="replay">↺ Replay (reset cuts)</button>
+    <button id="replay">↺ Replay</button>
     <button id="newStone">＋ New rough</button>
   </div>
 </div>
@@ -73,28 +81,28 @@ const dirL2 = new THREE.DirectionalLight(0x8090c0, 0.5); dirL2.position.set(-1, 
 
 const center = (N - 1) / 2;
 const R = N * 0.40;
-const planeY = R + 3;             // the cutting plane / wheel height (clears the stone at feed 0)
-const lookY = planeY * 0.42;
+const planeY = R + 3;            // cutting plane height
+const lookY = planeY * 0.40;
+const MAXFEED = 26, MAXRATE = 10, PREF = 4; // feed physics constants
 
-// the grinding wheel (a flat disc at planeY)
+// grinding wheel
 const wheel = new THREE.Mesh(
   new THREE.CylinderGeometry(R + 4, R + 4, 0.5, 56),
-  new THREE.MeshStandardMaterial({ color: 0x3a3d44, metalness: 0.6, roughness: 0.5, transparent: true, opacity: 0.55 })
-);
+  new THREE.MeshStandardMaterial({ color: 0x3a3d44, metalness: 0.6, roughness: 0.5, transparent: true, opacity: 0.5 }));
 wheel.position.y = planeY; scene.add(wheel);
 const wheelRim = new THREE.Mesh(
   new THREE.TorusGeometry(R + 4, 0.18, 8, 56),
-  new THREE.MeshStandardMaterial({ color: 0x9aa0ad, metalness: 0.8, roughness: 0.3 })
-);
+  new THREE.MeshStandardMaterial({ color: 0x9aa0ad, metalness: 0.8, roughness: 0.3 }));
 wheelRim.position.y = planeY; wheelRim.rotation.x = Math.PI / 2; scene.add(wheelRim);
 
 const group = new THREE.Group(); scene.add(group);
 const geo = new THREE.BoxGeometry(1, 1, 1);
 const mat = new THREE.MeshLambertMaterial();
-let mesh = null, surfaceIndex = [], destroyed = 0, xrayOn = false, feed = 0;
+let mesh = null, surfaceIndex = [], destroyed = 0, xrayOn = false;
 let vol, origMat, origQual;
-const dummy = new THREE.Object3D();
-const col = new THREE.Color();
+const pivotLocal = new THREE.Vector3();   // center of mass of remaining piece (local coords)
+const dummy = new THREE.Object3D(); const col = new THREE.Color();
+let cmd = 0, feed = 0, sliderActive = false, pendingRecenter = false;
 
 function colorFor(m, q) {
   if (m === G.SKIN) return col.setHSL(0.09, 0.35, 0.34);
@@ -106,15 +114,25 @@ function colorFor(m, q) {
 function loadVolume(seed) {
   vol = G.generateVolume(seed, N);
   origMat = vol.mat.slice(); origQual = vol.qual.slice();
-  destroyed = 0; feed = 0;
-  document.getElementById('feed').value = 0;
-  group.position.y = 0; group.rotation.set(-0.3, 0.5, 0);
-  rebuild();
+  destroyed = 0; cmd = 0; feed = 0; group.position.y = 0;
+  group.quaternion.setFromEuler(new THREE.Euler(-0.3, 0.5, 0));
+  rebuild(); recenter();
 }
 function replay() {
   vol.mat.set(origMat); vol.qual.set(origQual);
-  destroyed = 0; feed = 0; document.getElementById('feed').value = 0;
-  group.position.y = 0; rebuild();
+  destroyed = 0; cmd = 0; feed = 0; group.position.y = 0;
+  rebuild(); recenter();
+}
+
+function recenter() {
+  let cx = 0, cy = 0, cz = 0, n = 0;
+  for (let idx = 0; idx < vol.mat.length; idx++) {
+    if (vol.mat[idx] === G.EMPTY) continue;
+    const x = idx % N, y = Math.floor(idx / N) % N, z = Math.floor(idx / (N * N));
+    cx += x - center; cy += y - center; cz += z - center; n++;
+  }
+  if (n) pivotLocal.set(cx / n, cy / n, cz / n);
+  if (mesh) mesh.position.copy(pivotLocal).multiplyScalar(-1);
 }
 
 function rebuild() {
@@ -123,7 +141,7 @@ function rebuild() {
     const idx = x + N * (y + N * z);
     const m = vol.mat[idx];
     if (m === G.EMPTY) continue;
-    if (xrayOn) { if (m === G.OPAL) draw.push([idx, x, y, z, m]); }   // x-ray: only the seam
+    if (xrayOn) { if (m === G.OPAL) draw.push([idx, x, y, z, m]); }
     else if (G.isSurface(vol, x, y, z)) draw.push([idx, x, y, z, m]);
   }
   if (!mesh || mesh.userData.max < draw.length) {
@@ -144,6 +162,7 @@ function rebuild() {
     i++;
   }
   mesh.count = i;
+  mesh.position.copy(pivotLocal).multiplyScalar(-1);
   mesh.instanceMatrix.needsUpdate = true;
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
   updateScore(opalCount, sumQ);
@@ -158,59 +177,86 @@ function updateScore(opalCount, sumQ) {
   document.getElementById('sVal').textContent = xrayOn ? '—' : value;
 }
 
-// ---- the cut: remove any voxel pushed above the wheel plane ----
+// remove any voxel pushed above the wheel plane (uses center-of-mass pivot + feed)
 const _v = new THREE.Vector3();
 function grind() {
-  if (xrayOn) return;
+  if (xrayOn) return false;
   const q = group.quaternion;
   let changed = false;
   for (let idx = 0; idx < vol.mat.length; idx++) {
     const m = vol.mat[idx]; if (m === G.EMPTY) continue;
     const x = idx % N, y = Math.floor(idx / N) % N, z = Math.floor(idx / (N * N));
-    _v.set(x - center, y - center, z - center).applyQuaternion(q);
-    if (_v.y + feed > planeY) {       // above the plane → ground away
+    _v.set(x - center - pivotLocal.x, y - center - pivotLocal.y, z - center - pivotLocal.z).applyQuaternion(q);
+    if (_v.y + feed > planeY) {
       if (m === G.OPAL) destroyed++;
       vol.mat[idx] = G.EMPTY; changed = true;
     }
   }
   if (changed) rebuild();
+  return changed;
 }
 
-// ---- input: drag = rotate, slider = feed ----
+// ---- trackball rotation: infinite, no clamp ----
+const _qd = new THREE.Quaternion(), _ax = new THREE.Vector3();
+function rotateBy(dx, dy) {
+  _qd.setFromAxisAngle(_ax.set(0, 1, 0), dx * 0.01); group.quaternion.premultiply(_qd);
+  _qd.setFromAxisAngle(_ax.set(1, 0, 0), dy * 0.01); group.quaternion.premultiply(_qd);
+}
 let pdown = false, last = null;
-canvas.addEventListener('pointerdown', e => {
-  canvas.setPointerCapture(e.pointerId); pdown = true; last = [e.clientX, e.clientY];
-});
+canvas.addEventListener('pointerdown', e => { canvas.setPointerCapture(e.pointerId); pdown = true; last = [e.clientX, e.clientY]; });
 canvas.addEventListener('pointermove', e => {
   if (!pdown) return;
   const dx = e.clientX - last[0], dy = e.clientY - last[1]; last = [e.clientX, e.clientY];
-  group.rotation.y += dx * 0.01;
-  group.rotation.x = Math.max(-1.5, Math.min(1.5, group.rotation.x + dy * 0.01));
-  grind(); // rotating while fed into the wheel keeps grinding (lets you dome/shape)
+  rotateBy(dx, dy);
 });
-function endP(e) { pdown = false; }
-canvas.addEventListener('pointerup', endP);
-canvas.addEventListener('pointercancel', endP);
-
-const feedEl = document.getElementById('feed');
-feedEl.addEventListener('input', e => {
-  feed = +e.target.value; group.position.y = feed; grind();
-});
-// pinch / wheel zoom
+canvas.addEventListener('pointerup', () => { pdown = false; });
+canvas.addEventListener('pointercancel', () => { pdown = false; });
 canvas.addEventListener('wheel', e => {
   e.preventDefault();
   camera.position.z = Math.max(R * 2, Math.min(R * 12, camera.position.z * (1 + Math.sign(e.deltaY) * 0.1)));
 }, { passive: false });
 
+// ---- physics feed pad ----
+const track = document.getElementById('feedtrack');
+const fill = document.getElementById('feedfill');
+const thumb = document.getElementById('feedthumb');
+function setCmdFromY(clientY) {
+  const r = track.getBoundingClientRect();
+  const frac = Math.max(0, Math.min(1, 1 - (clientY - r.top) / r.height));
+  cmd = frac * MAXFEED;
+}
+track.addEventListener('pointerdown', e => { track.setPointerCapture(e.pointerId); sliderActive = true; setCmdFromY(e.clientY); });
+track.addEventListener('pointermove', e => { if (sliderActive) setCmdFromY(e.clientY); });
+function releaseFeed() { if (sliderActive) { sliderActive = false; cmd = feed; pendingRecenter = true; } }
+track.addEventListener('pointerup', releaseFeed);
+track.addEventListener('pointercancel', releaseFeed);
+
 document.getElementById('xray').onclick = e => { xrayOn = !xrayOn; e.target.classList.toggle('on', xrayOn); rebuild(); };
 document.getElementById('replay').onclick = replay;
 document.getElementById('newStone').onclick = () => loadVolume('rock-' + Math.random().toString(36).slice(2, 9));
 
+// ---- physics tick ----
+function tick(dt) {
+  if (!sliderActive) { cmd += (0 - cmd) * Math.min(1, dt * 9); if (cmd < 0.05) cmd = 0; } // spring back
+  if (cmd > feed) {                                  // pressing in → grind incrementally
+    const pressure = cmd - feed;
+    const rate = MAXRATE * Math.max(0.18, Math.min(1, pressure / PREF));
+    feed = Math.min(cmd, feed + rate * dt);
+    group.position.y = feed;
+    if (!xrayOn) grind();
+  } else if (feed > cmd) {                           // pulling back is free (stone retreats)
+    feed = cmd; group.position.y = feed;
+  }
+  if (pendingRecenter && !sliderActive && feed < 0.06 && cmd < 0.06) { recenter(); pendingRecenter = false; }
+  // pad visuals
+  fill.style.height = (feed / MAXFEED * 100) + '%';
+  thumb.style.bottom = (cmd / MAXFEED * 100) + '%';
+}
+
 function fitCamera() {
   const w = innerWidth, h = innerHeight;
   renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
-  const fov = camera.fov * Math.PI / 180;
-  const fit = R + 6;
+  const fov = camera.fov * Math.PI / 180, fit = R + 6;
   const vDist = fit / Math.sin(fov / 2);
   const hFov = 2 * Math.atan(Math.tan(fov / 2) * camera.aspect);
   const hDist = fit / Math.sin(hFov / 2);
@@ -221,11 +267,14 @@ addEventListener('resize', fitCamera);
 loadVolume('rock-' + Math.random().toString(36).slice(2, 9));
 fitCamera();
 
-(function animate() {
+let prev = performance.now();
+(function animate(now) {
   requestAnimationFrame(animate);
-  wheel.rotation.y += 0.05; wheelRim.rotation.z += 0.05; // spin the wheel
+  const dt = Math.min(0.05, (now - prev) / 1000); prev = now;
+  tick(dt);
+  wheel.rotation.y += 0.05; wheelRim.rotation.z += 0.05;
   renderer.render(scene, camera);
-})();
+})(prev);
 </script>
 </body>
 </html>
