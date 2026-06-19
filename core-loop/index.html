@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
-<title>EXP-003 · plane-cutter opal carve</title>
+<title>EXP-004 · opal core loop</title>
 <style>
   :root { color-scheme: dark; }
   * { box-sizing: border-box; }
@@ -13,18 +13,21 @@
   .top { position: fixed; top: 0; left: 0; right: 0; padding: 9px 12px; display: flex; gap: 10px; align-items: center;
     justify-content: space-between; background: linear-gradient(rgba(0,0,0,0.55), transparent); pointer-events: none; }
   .top b { font-weight: 600; } .top .sub { color: #7d818b; font-size: 11px; }
-  .hud { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
-    background: linear-gradient(transparent, rgba(0,0,0,0.7)); display: flex; flex-direction: column; gap: 10px; }
+  .hud { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+    background: linear-gradient(transparent, rgba(0,0,0,0.72)); display: flex; flex-direction: column; gap: 8px; }
+  .goal { font-size: 12px; color: #aeb2bb; }
+  .goal b { color: #e6e8ec; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   button { background: #1b1e24; color: #cfd2d8; border: 1px solid #30343c; border-radius: 8px; padding: 9px 13px; font-size: 13px; pointer-events: auto; }
   button.on { background: #2f4a3a; border-color: #3f6b50; color: #b6f0c8; }
-  .score { display: flex; gap: 14px; font-size: 12px; color: #9aa; flex-wrap: wrap; pointer-events: none; }
+  .score { display: flex; gap: 13px; font-size: 12px; color: #9aa; flex-wrap: wrap; pointer-events: none; }
   .score b { color: #e6e8ec; font-variant-numeric: tabular-nums; }
-  .score .opal { color: #c9a6ff; } .score .waste { color: #e69090; }
-
-  /* big custom physics feed control on the right */
+  .score .waste { color: #e69090; } .score .opal { color: #c9a6ff; }
+  .cuelbl { font-size: 11px; color: #9aa; display: flex; align-items: center; gap: 6px; }
+  .cuelbl input { width: 90px; }
+  /* feed pad */
   #feedctl { position: fixed; right: 10px; top: 50%; transform: translateY(-50%);
-    width: 78px; height: 60vh; max-height: 460px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
+    width: 78px; height: 56vh; max-height: 440px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
   #feedtrack { position: relative; flex: 1; width: 64px; border-radius: 36px; touch-action: none;
     background: #15171c; border: 1px solid #2a2d35; overflow: hidden; box-shadow: inset 0 0 16px rgba(0,0,0,0.5); }
   #feedfill { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(#7fa8ff, #3d63c8); opacity: 0.5; }
@@ -33,11 +36,20 @@
     box-shadow: 0 3px 10px rgba(0,0,0,0.5); }
   #feedctl .cap { font-size: 11px; color: #9aa; text-align: center; line-height: 1.25; }
   #feedctl .cap b { color: #cfd2d8; }
+  /* appraisal overlay */
+  .overlay { position: fixed; inset: 0; background: rgba(4,5,7,0.78); display: flex; align-items: center; justify-content: center; z-index: 10; padding: 18px; }
+  .card { background: #16181d; border: 1px solid #2a2d35; border-radius: 14px; padding: 20px; max-width: 420px; width: 100%; }
+  .card h2 { margin: 0 0 8px; font-size: 16px; }
+  .card .big { font-size: 26px; font-weight: 700; }
+  .card .muted { color: #8b8f98; font-size: 14px; font-weight: 400; }
+  .card .reveal { margin: 12px 0; font-size: 13px; color: #c2c6cf; }
+  .card ul { margin: 10px 0; padding-left: 18px; font-size: 12px; color: #aab; }
+  .card .fact { margin: 12px 0; font-size: 12px; color: #9fb0c8; background: #11141a; border-radius: 8px; padding: 9px 11px; }
 </style>
 </head>
 <body>
 <canvas id="c"></canvas>
-<div class="top"><b>EXP-003 — plane-cutter carve · <span class="sub">build 20260619-191858</span></b><span class="sub" id="hint">1 finger = rotate · 2 fingers = pinch-zoom + twist-roll · pad = grind</span></div>
+<div class="top"><b>EXP-004 — opal core loop · <span class="sub">build 20260619-191858</span></b><span class="sub" id="hint">1 finger rotate · 2 fingers pinch/twist · pad = grind into wheel</span></div>
 
 <div id="feedctl">
   <div class="cap"><b>PRESS ▲</b></div>
@@ -46,18 +58,24 @@
 </div>
 
 <div class="hud">
+  <div class="goal">🎯 <b>Shape the most valuable gem you can from this rough.</b> Read the surface, grind down to the color bar, don't grind through it. No undo.</div>
   <div class="score">
-    <span>exposed opal <b class="opal" id="sOpal">0</b></span>
-    <span>avg color <b id="sColor">0</b></span>
+    <span>opal face <b id="sFace">0</b></span>
+    <span>brightness <b id="sBright">0</b></span>
+    <span>clean <b id="sClean">—</b></span>
     <span>destroyed <b class="waste" id="sWaste">0</b></span>
-    <span>value <b id="sVal">0</b></span>
+    <span>value <b id="sVal">0</b> / par <b id="sPar">0</b> <b class="opal" id="sPct"></b></span>
   </div>
   <div class="row">
-    <button id="xray">👁 X-ray opal</button>
+    <label class="cuelbl">cues <input id="cue" type="range" min="0" max="1" step="0.05" value="0.5"></label>
+    <button id="appraise">✓ Appraise</button>
+    <button id="xray">🔬 Practice X-ray</button>
     <button id="replay">↺ Replay</button>
     <button id="newStone">＋ New rough</button>
   </div>
 </div>
+
+<div id="overlay" class="overlay" style="display:none"><div class="card" id="ocard"></div></div>
 
 <script src="gen.js"></script>
 <script type="importmap">
@@ -81,11 +99,10 @@ const dirL2 = new THREE.DirectionalLight(0x8090c0, 0.5); dirL2.position.set(-1, 
 
 const center = (N - 1) / 2;
 const R = N * 0.40;
-const planeY = R + 3;            // cutting plane height
+const planeY = R + 3;
 const lookY = planeY * 0.40;
-const MAXFEED = 26, MAXRATE = 10, PREF = 4; // feed physics constants
+const MAXFEED = 26, MAXRATE = 10, PREF = 4;
 
-// grinding wheel
 const wheel = new THREE.Mesh(
   new THREE.CylinderGeometry(R + 4, R + 4, 0.5, 56),
   new THREE.MeshStandardMaterial({ color: 0x3a3d44, metalness: 0.6, roughness: 0.5, transparent: true, opacity: 0.5 }));
@@ -100,13 +117,32 @@ const geo = new THREE.BoxGeometry(1, 1, 1);
 const mat = new THREE.MeshLambertMaterial();
 let mesh = null, surfaceIndex = [], destroyed = 0, xrayOn = false;
 let vol, origMat, origQual;
-const pivotLocal = new THREE.Vector3();   // center of mass of remaining piece (local coords)
+let cueStrength = 0.5, parVal = 0, lastYou = null;
+const opalTint = new THREE.Color();
+const pivotLocal = new THREE.Vector3();
 const dummy = new THREE.Object3D(); const col = new THREE.Color();
 let cmd = 0, feed = 0, sliderActive = false, pendingRecenter = false;
 
-function colorFor(m, q) {
-  if (m === G.SKIN) return col.setHSL(0.09, 0.35, 0.34);
-  if (m === G.OPAL) return col.setHSL((0.5 + q * 0.55) % 1, 0.55 + 0.4 * q, 0.30 + 0.40 * q);
+// ---- valuation (mirrors docs/domain/game-mapping.md §B) ----
+const bFactor = (B) => Math.max(0.15, 1 - (B - 1) * 0.14);     // B1=1.0 … B7≈0.16
+const tone01 = (Nn) => Math.max(0.2, 1 - (Nn - 1) * 0.1);       // N1=1.0 … N9=0.2
+function computeValue(faceArea, avgQual, cleanliness, destroyedCount) {
+  if (faceArea <= 0) return 0;
+  const bright01 = bFactor(vol.brightnessB) * avgQual;
+  const grade = (0.15 + 0.85 * bright01) * (0.35 + 0.65 * tone01(vol.toneN))
+              * (0.40 + 0.60 * vol.colorScore) * (0.55 + 0.45 * vol.patternScore);
+  const rob = (vol.color === 'red' && vol.toneN <= 3) ? 1.6 : (vol.color === 'orange' && vol.toneN <= 4) ? 1.2 : 1.0;
+  const defect = Math.max(0, 1 - destroyedCount / (faceArea + destroyedCount + 8));
+  return Math.round(vol.baseValue * grade * rob * faceArea * cleanliness * defect);
+}
+
+function colorFor(m, idx) {
+  if (m === G.OPAL) { const q = vol.qual[idx]; return col.setHSL(vol.hue, 0.45 + 0.5 * q, 0.26 + 0.46 * q); }
+  if (m === G.SKIN) {
+    col.setHSL(0.09, 0.35, 0.34);
+    if (cueStrength > 0 && vol.near) { const nz = vol.near[idx] / 255; if (nz > 0) col.lerp(opalTint, Math.min(0.6, cueStrength * nz * 0.7)); }
+    return col;
+  }
   if (m === G.POTCH) return col.setRGB(0.17, 0.17, 0.20);
   return col.setRGB(0.14, 0.11, 0.08);
 }
@@ -114,13 +150,18 @@ function colorFor(m, q) {
 function loadVolume(seed) {
   vol = G.generateVolume(seed, N);
   origMat = vol.mat.slice(); origQual = vol.qual.slice();
-  destroyed = 0; cmd = 0; feed = 0; group.position.y = 0;
+  destroyed = 0; cmd = 0; feed = 0; group.position.y = 0; lastYou = null;
   group.quaternion.setFromEuler(new THREE.Euler(-0.3, 0.5, 0));
+  opalTint.setHSL(vol.hue, 0.6, 0.5);
+  // Par = ideal cut: expose the whole seam at its mean quality, clean, zero waste
+  let tot = 0, sq = 0;
+  for (let k = 0; k < vol.mat.length; k++) if (vol.mat[k] === G.OPAL) { tot++; sq += vol.qual[k]; }
+  parVal = computeValue(tot, tot ? sq / tot : 0, 1, 0);
   rebuild(); recenter();
 }
 function replay() {
   vol.mat.set(origMat); vol.qual.set(origQual);
-  destroyed = 0; cmd = 0; feed = 0; group.position.y = 0;
+  destroyed = 0; cmd = 0; feed = 0; group.position.y = 0; lastYou = null;
   rebuild(); recenter();
 }
 
@@ -152,32 +193,72 @@ function rebuild() {
     group.add(mesh);
   }
   surfaceIndex = [];
-  let i = 0, opalCount = 0, sumQ = 0;
+  let i = 0, faceArea = 0, sumQ = 0, junk = 0;
   for (const [idx, x, y, z, m] of draw) {
     dummy.position.set(x - center, y - center, z - center); dummy.updateMatrix();
     mesh.setMatrixAt(i, dummy.matrix);
-    mesh.setColorAt(i, colorFor(m, vol.qual[idx]));
+    mesh.setColorAt(i, colorFor(m, idx));
     surfaceIndex[i] = idx;
-    if (m === G.OPAL) { opalCount++; sumQ += vol.qual[idx]; }
+    if (m === G.OPAL) { faceArea++; sumQ += vol.qual[idx]; }
+    else if (m === G.POTCH || m === G.MATRIX) junk++;
     i++;
   }
   mesh.count = i;
   mesh.position.copy(pivotLocal).multiplyScalar(-1);
   mesh.instanceMatrix.needsUpdate = true;
   if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
-  updateScore(opalCount, sumQ);
+  updateScore(faceArea, sumQ, junk);
 }
 
-function updateScore(opalCount, sumQ) {
-  const avgQ = opalCount ? sumQ / opalCount : 0;
-  const value = Math.max(0, Math.round(opalCount * (0.4 + 0.6 * avgQ) * 4 - destroyed * 8));
-  document.getElementById('sOpal').textContent = xrayOn ? '(x-ray)' : opalCount;
-  document.getElementById('sColor').textContent = Math.round(avgQ * 100);
-  document.getElementById('sWaste').textContent = destroyed;
-  document.getElementById('sVal').textContent = xrayOn ? '—' : value;
+const $ = (id) => document.getElementById(id);
+function updateScore(faceArea, sumQ, junk) {
+  if (xrayOn) { $('sFace').textContent = '(x-ray)'; $('sBright').textContent = '—'; $('sClean').textContent = '—'; $('sWaste').textContent = destroyed; $('sVal').textContent = '—'; $('sPar').textContent = parVal; $('sPct').textContent = ''; return; }
+  const avgQ = faceArea ? sumQ / faceArea : 0;
+  const cleanliness = (faceArea + junk) ? faceArea / (faceArea + junk) : 1;
+  const youVal = computeValue(faceArea, avgQ, cleanliness, destroyed);
+  lastYou = { faceArea, avgQ, cleanliness, youVal };
+  $('sFace').textContent = faceArea;
+  $('sBright').textContent = Math.round(bFactor(vol.brightnessB) * avgQ * 100);
+  $('sClean').textContent = faceArea ? Math.round(cleanliness * 100) + '%' : '—';
+  $('sWaste').textContent = destroyed;
+  $('sVal').textContent = youVal;
+  $('sPar').textContent = parVal;
+  $('sPct').textContent = (parVal && faceArea) ? '(' + Math.round(100 * youVal / parVal) + '%)' : '';
 }
 
-// remove any voxel pushed above the wheel plane (uses center-of-mass pivot + feed)
+const FACTS = [
+  "Opal's color isn't pigment — it's light diffracting through microscopic silica spheres; sphere size sets the hue, and red needs the rarest, largest spheres.",
+  "Most opal mined is worthless 'potch' — gem material is a tiny fraction. Every rough is a genuine gamble.",
+  "A gem color bar can be just 1–2 mm thick — grind a hair too far and it's gone.",
+  "Black opal (dark body tone) is the rarest and most valuable — red-on-black is the apex.",
+  "True harlequin pattern is so rare one cutter reported seeing only two in twenty years.",
+  "Opal has been found on Mars, and Australia produces opalized dinosaur bones.",
+];
+let factI = 0;
+const randFact = () => FACTS[(factI++) % FACTS.length];
+
+function appraise() {
+  const ly = lastYou || { faceArea: 0, youVal: 0, avgQ: 0, cleanliness: 1 };
+  const pct = parVal ? Math.round(100 * ly.youVal / parVal) : 0;
+  const grade = ly.faceArea === 0 ? '—' : pct >= 85 ? 'S' : pct >= 70 ? 'A' : pct >= 50 ? 'B' : pct >= 30 ? 'C' : 'D';
+  const tips = [];
+  if (ly.faceArea === 0) tips.push('You never reached the color bar — feed down into the stone to find the opal.');
+  if (destroyed > Math.max(6, ly.faceArea * 0.3)) tips.push('You ground through a lot of opal (' + destroyed + ' destroyed) — ease off the feed as you near the bar.');
+  if (ly.faceArea > 0 && ly.cleanliness < 0.6) tips.push('Messy window — you exposed a lot of potch/matrix around the color.');
+  if (parVal && ly.faceArea > 0 && ly.youVal < parVal * 0.5) tips.push('You left much of the bar buried — there was more gem in this rough.');
+  if (!tips.length) tips.push('Clean work — you realized most of this rough’s potential.');
+  $('ocard').innerHTML = `<h2>Appraisal — grade ${grade}</h2>
+    <div class="big">$${ly.youVal} <span class="muted">/ par $${parVal}${parVal ? ' (' + pct + '%)' : ''}</span></div>
+    <div class="reveal">This rough: <b>${vol.type}</b> opal · body tone <b>N${vol.toneN}</b> · <b>${vol.color}</b> fire · brightness <b>B${vol.brightnessB}</b> · pattern <b>${vol.pattern}</b></div>
+    <ul>${tips.map(t => '<li>' + t + '</li>').join('')}</ul>
+    <div class="fact">💡 ${randFact()}</div>
+    <div class="row"><button id="ovNew">＋ New rough</button><button id="ovClose">Keep cutting</button></div>`;
+  $('overlay').style.display = 'flex';
+  $('ovNew').onclick = () => { $('overlay').style.display = 'none'; loadVolume('rock-' + Math.random().toString(36).slice(2, 9)); };
+  $('ovClose').onclick = () => { $('overlay').style.display = 'none'; };
+}
+
+// remove any voxel pushed above the wheel plane (center-of-mass pivot + feed)
 const _v = new THREE.Vector3();
 function grind() {
   if (xrayOn) return false;
@@ -196,24 +277,18 @@ function grind() {
   return changed;
 }
 
-// ---- trackball rotation: infinite, no clamp ----
-const _qd = new THREE.Quaternion(), _ax = new THREE.Vector3();
+// ---- trackball rotation + roll + zoom ----
+const _qd = new THREE.Quaternion(), _ax = new THREE.Vector3(), _fwd = new THREE.Vector3();
 function rotateBy(dx, dy) {
   _qd.setFromAxisAngle(_ax.set(0, 1, 0), dx * 0.01); group.quaternion.premultiply(_qd);
   _qd.setFromAxisAngle(_ax.set(1, 0, 0), dy * 0.01); group.quaternion.premultiply(_qd);
 }
-const _fwd = new THREE.Vector3();
 function rollBy(dA) { camera.getWorldDirection(_fwd); _qd.setFromAxisAngle(_fwd, dA); group.quaternion.premultiply(_qd); }
 function zoomBy(scale) { camera.position.z = Math.max(R * 2, Math.min(R * 12, camera.position.z * scale)); }
 
-// multitouch: 1 finger = rotate (yaw/pitch), 2 fingers = pinch-zoom + twist-roll
 const ptrs = new Map();
 let rotLast = null, lastDist = 0, lastAng = 0, startDist = 0, startAng = 0, twoMode = null;
-function twoMetrics() {
-  const a = [...ptrs.values()];
-  const dx = a[1].x - a[0].x, dy = a[1].y - a[0].y;
-  return { dist: Math.hypot(dx, dy) || 1, ang: Math.atan2(dy, dx) };
-}
+function twoMetrics() { const a = [...ptrs.values()]; const dx = a[1].x - a[0].x, dy = a[1].y - a[0].y; return { dist: Math.hypot(dx, dy) || 1, ang: Math.atan2(dy, dx) }; }
 function initTwo() { const m = twoMetrics(); startDist = lastDist = m.dist; startAng = lastAng = m.ang; twoMode = null; }
 canvas.addEventListener('pointerdown', e => {
   canvas.setPointerCapture(e.pointerId);
@@ -230,7 +305,7 @@ canvas.addEventListener('pointermove', e => {
   } else if (ptrs.size >= 2) {
     const m = twoMetrics();
     let dA = m.ang - lastAng; if (dA > Math.PI) dA -= 2 * Math.PI; if (dA < -Math.PI) dA += 2 * Math.PI;
-    if (!twoMode) {                                  // lock the gesture to ONE action (zoom xor roll)
+    if (!twoMode) {
       const zoomScore = Math.abs(m.dist / startDist - 1);
       let tA = m.ang - startAng; if (tA > Math.PI) tA -= 2 * Math.PI; if (tA < -Math.PI) tA += 2 * Math.PI;
       if (zoomScore > 0.06 || Math.abs(tA) > 0.10) twoMode = (zoomScore * 1.4 >= Math.abs(tA)) ? 'zoom' : 'roll';
@@ -250,38 +325,30 @@ canvas.addEventListener('pointercancel', endPtr);
 canvas.addEventListener('wheel', e => { e.preventDefault(); zoomBy(1 + Math.sign(e.deltaY) * 0.1); }, { passive: false });
 
 // ---- physics feed pad ----
-const track = document.getElementById('feedtrack');
-const fill = document.getElementById('feedfill');
-const thumb = document.getElementById('feedthumb');
-function setCmdFromY(clientY) {
-  const r = track.getBoundingClientRect();
-  const frac = Math.max(0, Math.min(1, 1 - (clientY - r.top) / r.height));
-  cmd = frac * MAXFEED;
-}
+const track = $('feedtrack'), fill = $('feedfill'), thumb = $('feedthumb');
+function setCmdFromY(clientY) { const r = track.getBoundingClientRect(); cmd = Math.max(0, Math.min(1, 1 - (clientY - r.top) / r.height)) * MAXFEED; }
 track.addEventListener('pointerdown', e => { track.setPointerCapture(e.pointerId); sliderActive = true; setCmdFromY(e.clientY); });
 track.addEventListener('pointermove', e => { if (sliderActive) setCmdFromY(e.clientY); });
 function releaseFeed() { if (sliderActive) { sliderActive = false; cmd = feed; pendingRecenter = true; } }
 track.addEventListener('pointerup', releaseFeed);
 track.addEventListener('pointercancel', releaseFeed);
 
-document.getElementById('xray').onclick = e => { xrayOn = !xrayOn; e.target.classList.toggle('on', xrayOn); rebuild(); };
-document.getElementById('replay').onclick = replay;
-document.getElementById('newStone').onclick = () => loadVolume('rock-' + Math.random().toString(36).slice(2, 9));
+$('cue').oninput = e => { cueStrength = +e.target.value; rebuild(); };
+$('appraise').onclick = appraise;
+$('xray').onclick = e => { xrayOn = !xrayOn; e.target.classList.toggle('on', xrayOn); rebuild(); };
+$('replay').onclick = replay;
+$('newStone').onclick = () => loadVolume('rock-' + Math.random().toString(36).slice(2, 9));
 
-// ---- physics tick ----
 function tick(dt) {
-  if (!sliderActive) { cmd += (0 - cmd) * Math.min(1, dt * 9); if (cmd < 0.05) cmd = 0; } // spring back
-  if (cmd > feed) {                                  // pressing in → grind incrementally
+  if (!sliderActive) { cmd += (0 - cmd) * Math.min(1, dt * 9); if (cmd < 0.05) cmd = 0; }
+  if (cmd > feed) {
     const pressure = cmd - feed;
     const rate = MAXRATE * Math.max(0.18, Math.min(1, pressure / PREF));
     feed = Math.min(cmd, feed + rate * dt);
     group.position.y = feed;
     if (!xrayOn) grind();
-  } else if (feed > cmd) {                           // pulling back is free (stone retreats)
-    feed = cmd; group.position.y = feed;
-  }
+  } else if (feed > cmd) { feed = cmd; group.position.y = feed; }
   if (pendingRecenter && !sliderActive && feed < 0.06 && cmd < 0.06) { recenter(); pendingRecenter = false; }
-  // pad visuals
   fill.style.height = (feed / MAXFEED * 100) + '%';
   thumb.style.bottom = (cmd / MAXFEED * 100) + '%';
 }
