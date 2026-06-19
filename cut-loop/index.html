@@ -48,7 +48,7 @@
 </head>
 <body>
 <header>
-  <h1>EXP-001 — art-free cut / grind / score loop <span style="color:#5b5f68;font-weight:400;font-size:11px;">build 20260619-130339</span></h1>
+  <h1>EXP-001 — art-free cut / grind / score loop <span style="color:#5b5f68;font-weight:400;font-size:11px;">build 20260619-154039</span></h1>
   <p>Read the rough (perimeter walls + cue sheen + the cross-section you uncover), grind to the band, don't grind through it. No undo. Goal: get as close to <b>Par</b> as you can.</p>
 </header>
 
@@ -122,7 +122,7 @@
   </div>
 </div>
 
-<script src="game.js?v=20260619-130339"></script>
+<script src="game.js?v=20260619-154039"></script>
 <script>
 const S = window.OpalSim;
 const W = 22, H = 18, D = 14;
@@ -344,7 +344,7 @@ document.getElementById('copyFb').onclick = async () => {
   const s = S.scoreState(stone, grind);
   const pct = par.value ? Math.round(100 * s.value / par.value) : 0;
   const txt =
-`EXP-001 build 20260619-130339
+`EXP-001 build 20260619-154039
 seed=${stone.seed}  cue=${cueStrength.toFixed(2)}  brush=${brush}
 You=${s.value}  Par=${par.value}  Flat=${flat.value}  (You/Par ${pct}%)
 face=${s.face}  totalOpal=${s.totalOpal}  color=${Math.round(s.avgColor*100)}  clean=${Math.round(s.cleanliness*100)}%  destroyed=${s.destroyed}

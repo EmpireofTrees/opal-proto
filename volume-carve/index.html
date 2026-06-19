@@ -37,7 +37,7 @@
 </head>
 <body>
 <canvas id="c"></canvas>
-<div class="top"><b>EXP-003 — plane-cutter carve · <span class="sub">build 20260619-130339</span></b><span class="sub" id="hint">1 finger = rotate · 2 fingers = pinch-zoom + twist-roll · pad = grind</span></div>
+<div class="top"><b>EXP-003 — plane-cutter carve · <span class="sub">build 20260619-154039</span></b><span class="sub" id="hint">1 finger = rotate · 2 fingers = pinch-zoom + twist-roll · pad = grind</span></div>
 
 <div id="feedctl">
   <div class="cap"><b>PRESS ▲</b></div>
@@ -208,17 +208,18 @@ function zoomBy(scale) { camera.position.z = Math.max(R * 2, Math.min(R * 12, ca
 
 // multitouch: 1 finger = rotate (yaw/pitch), 2 fingers = pinch-zoom + twist-roll
 const ptrs = new Map();
-let rotLast = null, lastDist = 0, lastAng = 0;
+let rotLast = null, lastDist = 0, lastAng = 0, startDist = 0, startAng = 0, twoMode = null;
 function twoMetrics() {
   const a = [...ptrs.values()];
   const dx = a[1].x - a[0].x, dy = a[1].y - a[0].y;
   return { dist: Math.hypot(dx, dy) || 1, ang: Math.atan2(dy, dx) };
 }
+function initTwo() { const m = twoMetrics(); startDist = lastDist = m.dist; startAng = lastAng = m.ang; twoMode = null; }
 canvas.addEventListener('pointerdown', e => {
   canvas.setPointerCapture(e.pointerId);
   ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
   if (ptrs.size === 1) rotLast = [e.clientX, e.clientY];
-  else if (ptrs.size === 2) { const m = twoMetrics(); lastDist = m.dist; lastAng = m.ang; }
+  else if (ptrs.size === 2) initTwo();
 });
 canvas.addEventListener('pointermove', e => {
   if (!ptrs.has(e.pointerId)) return;
@@ -228,16 +229,21 @@ canvas.addEventListener('pointermove', e => {
     rotateBy(dx, dy);
   } else if (ptrs.size >= 2) {
     const m = twoMetrics();
-    zoomBy(lastDist / m.dist);
     let dA = m.ang - lastAng; if (dA > Math.PI) dA -= 2 * Math.PI; if (dA < -Math.PI) dA += 2 * Math.PI;
-    rollBy(dA);
+    if (!twoMode) {                                  // lock the gesture to ONE action (zoom xor roll)
+      const zoomScore = Math.abs(m.dist / startDist - 1);
+      let tA = m.ang - startAng; if (tA > Math.PI) tA -= 2 * Math.PI; if (tA < -Math.PI) tA += 2 * Math.PI;
+      if (zoomScore > 0.06 || Math.abs(tA) > 0.10) twoMode = (zoomScore * 1.4 >= Math.abs(tA)) ? 'zoom' : 'roll';
+    }
+    if (twoMode === 'zoom') zoomBy(lastDist / m.dist);
+    else if (twoMode === 'roll') rollBy(dA);
     lastDist = m.dist; lastAng = m.ang;
   }
 });
 function endPtr(e) {
   ptrs.delete(e.pointerId);
   if (ptrs.size === 1) { const a = [...ptrs.values()][0]; rotLast = [a.x, a.y]; }
-  else if (ptrs.size === 2) { const m = twoMetrics(); lastDist = m.dist; lastAng = m.ang; }
+  else if (ptrs.size === 2) initTwo();
 }
 canvas.addEventListener('pointerup', endPtr);
 canvas.addEventListener('pointercancel', endPtr);
