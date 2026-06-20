@@ -21,7 +21,6 @@
   button.go { background: #2f4a3a; border-color: #3f6b50; color: #b6f0c8; }
   .score { display: flex; gap: 13px; font-size: 12px; color: #9aa; flex-wrap: wrap; pointer-events: none; }
   .score b { color: #e6e8ec; font-variant-numeric: tabular-nums; } .score .waste { color: #e69090; } .score .opal { color: #c9a6ff; }
-  .cuelbl { font-size: 11px; color: #9aa; display: flex; align-items: center; gap: 6px; } .cuelbl input { width: 90px; }
   #feedctl { position: fixed; right: 10px; top: 50%; transform: translateY(-50%);
     width: 76px; height: 54vh; max-height: 430px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
   #feedtrack { position: relative; flex: 1; width: 62px; border-radius: 34px; touch-action: none;
@@ -40,7 +39,7 @@
 </head>
 <body>
 <canvas id="gl"></canvas>
-<div class="top"><b>EXP-006 — opal core loop (SDF) · <span class="sub">build 20260619-213756</span></b><span class="sub" id="hint">1 finger rotate · 2 fingers pinch/twist · PRESS pad = grind a facet</span></div>
+<div class="top"><b>EXP-006 — opal core loop (SDF) · <span class="sub">build 20260619-215503</span></b><span class="sub" id="hint">1 finger rotate · 2 fingers pinch/twist · PRESS pad = grind into the wheel</span></div>
 <button id="enable">📱 Tap to enable tilt (see the fire)</button>
 
 <div id="feedctl">
@@ -50,7 +49,7 @@
 </div>
 
 <div class="hud">
-  <div class="goal">🎯 <b>Shape the most valuable gem you can.</b> Read the surface, press to grind facets to the bar, don't grind through it. No undo.</div>
+  <div class="goal">🎯 <b>Shape the most valuable gem you can.</b> Read the surface (color outcrops hint at the bar), press to grind facets to the bar, don't grind through it. No undo.</div>
   <div class="score">
     <span>opal face <b id="sFace">0</b></span>
     <span>color <b id="sCol">0</b></span>
@@ -59,7 +58,6 @@
     <span>value <b id="sVal">0</b> / par <b id="sPar">0</b> <b class="opal" id="sPct"></b></span>
   </div>
   <div class="row">
-    <label class="cuelbl">cues <input id="cue" type="range" min="0" max="1" step="0.05" value="0.5"></label>
     <button id="appraise">✓ Appraise</button>
     <button id="replay">↺ Replay</button>
     <button id="newStone">＋ New stone</button>
@@ -79,9 +77,9 @@ precision highp float;
 out vec4 fragColor;
 uniform vec2 uRes; uniform float uTime; uniform vec2 uTilt;
 uniform mat3 uRot; uniform vec3 uSeed; uniform vec3 uPivot; uniform float uFeed;
-uniform float uHue; uniform float uBody; uniform float uCue;
+uniform float uHue; uniform float uBody; uniform vec3 uShape; uniform float uCamZ;
+uniform float uPlaneY; uniform float uWheelR;
 uniform vec4 uCuts[16]; uniform int uCutN; uniform vec4 uActive; uniform float uActiveOn;
-uniform float uCamZ;
 const float R=1.0;
 float hash(vec3 p){ p=fract(p*0.3183099+0.1); p*=17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
 float vnoise(vec3 x){ vec3 i=floor(x), f=fract(x); f=f*f*(3.0-2.0*f);
@@ -89,7 +87,7 @@ float vnoise(vec3 x){ vec3 i=floor(x), f=fract(x); f=f*f*(3.0-2.0*f);
              mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z); }
 float fbm(vec3 p){ float s=0.0,a=0.5; for(int i=0;i<3;i++){ s+=a*vnoise(p); p=p*2.02+1.7; a*=0.5;} return s; }
 float cutSDF(vec3 s){ float c=-1e9; for(int i=0;i<16;i++){ if(i>=uCutN) break; c=max(c,dot(s,uCuts[i].xyz)-uCuts[i].w);} if(uActiveOn>0.5) c=max(c,dot(s,uActive.xyz)-uActive.w); return c; }
-float blobSDF(vec3 s){ float lump=fbm(s*1.3+uSeed)-0.44; return length(s)-R*(1.0+0.34*lump); }
+float blobSDF(vec3 s){ vec3 q=s/uShape; float lump=fbm(s*1.1+uSeed)-0.44; float lump2=fbm(s*2.6+uSeed*1.4)-0.5; return length(q)-R*(1.0+0.40*lump+0.15*lump2); }
 float mapD(vec3 s){ return max(blobSDF(s),cutSDF(s)); }
 vec3 nrm(vec3 s){ vec2 e=vec2(0.0022,0.0); return normalize(vec3(mapD(s+e.xyy)-mapD(s-e.xyy),mapD(s+e.yxy)-mapD(s-e.yxy),mapD(s+e.yyx)-mapD(s-e.yyx))); }
 vec3 pal(float t){ return 0.5+0.5*cos(6.28318*(t+vec3(0.0,0.33,0.67))); }
@@ -100,30 +98,36 @@ void main(){
   mat3 Rt=transpose(uRot);
   vec3 ro=Rt*(roW-vec3(0.0,uFeed,0.0))+uPivot, rd=Rt*rdW;
   float t=0.0,d; bool hit=false; vec3 s=ro;
-  for(int i=0;i<90;i++){ s=ro+rd*t; d=mapD(s); if(d<0.0008){hit=true;break;} t+=d*0.6; if(t>6.0) break; }
+  for(int i=0;i<90;i++){ s=ro+rd*t; d=mapD(s); if(d<0.0008){hit=true;break;} t+=d*0.5; if(t>7.0) break; }
   vec3 colr=bg;
   if(hit){
     vec3 n=nrm(s); vec3 lW=normalize(vec3(uTilt*1.6+vec2(0.25,0.55),1.1)); vec3 l=Rt*lW, v=-rd;
     float diff=clamp(dot(n,l),0.0,1.0); float spec=pow(clamp(dot(reflect(-l,n),v),0.0,1.0),36.0);
-    float bV=blobSDF(s), cV=cutSDF(s); bool isCut=(uCutN>0||uActiveOn>0.5)&&(cV>bV-0.02);
-    if(isCut){
-      float seam=fbm(s*0.9+uSeed*1.7); float barDist=abs(seam-0.46);
-      if(barDist<0.04){
-        float hue=fract(uHue+0.10*(fbm(s*0.6+uSeed*2.3)-0.5));
-        vec3 fdir=normalize(vec3(fbm(s*0.7+1.0)-0.5,fbm(s*0.7+2.0)-0.5,fbm(s*0.7+3.0)-0.5));
-        float ang=dot(reflect(-l,n),v); float shift=dot(n,fdir)+uTilt.x*0.7+uTilt.y*0.4+ang*0.5;
-        vec3 fire=pow(pal(hue+shift*0.6),vec3(0.8)); float flash=smoothstep(0.15,1.0,ang)*0.7+0.3; fire*=0.5+1.0*flash;
-        vec3 body=mix(vec3(0.55,0.55,0.58),vec3(0.02,0.02,0.03),uBody);
-        colr=mix(body,fire,smoothstep(0.04,0.0,barDist)); colr=colr*(0.55+0.6*diff)+spec*0.5;
-      } else { colr=vec3(0.12,0.12,0.14)*(0.5+0.7*diff)+spec*0.3; }
+    float seam=fbm(s*0.9+uSeed*1.7); float barDist=abs(seam-0.46);
+    if(barDist<0.025){                       // opal: on cut faces AND where the bar outcrops on the surface
+      float hue=fract(uHue+0.10*(fbm(s*0.6+uSeed*2.3)-0.5));
+      vec3 fdir=normalize(vec3(fbm(s*0.7+1.0)-0.5,fbm(s*0.7+2.0)-0.5,fbm(s*0.7+3.0)-0.5));
+      float ang=dot(reflect(-l,n),v); float shift=dot(n,fdir)+uTilt.x*0.7+uTilt.y*0.4+ang*0.5;
+      vec3 fire=pow(pal(hue+shift*0.6),vec3(0.8)); float flash=smoothstep(0.15,1.0,ang)*0.7+0.3; fire*=0.5+1.0*flash;
+      vec3 body=mix(vec3(0.55,0.55,0.58),vec3(0.02,0.02,0.03),uBody);
+      colr=mix(body,fire,smoothstep(0.025,0.0,barDist)); colr=colr*(0.55+0.6*diff)+spec*0.5;
     } else {
-      float tex=0.5+0.5*fbm(s*4.0+uSeed); vec3 rock=mix(vec3(0.30,0.24,0.17),vec3(0.46,0.38,0.28),tex);
-      // honest cue: glow where the bar runs near this surface
-      float seamN=fbm((s-n*0.06)*0.9+uSeed*1.7); float nearBar=1.0-smoothstep(0.0,0.10,abs(seamN-0.46));
-      vec3 fireHint=pal(uHue+0.2); rock=mix(rock,fireHint,clamp(uCue*nearBar*0.5,0.0,0.6));
-      colr=rock*(0.45+0.75*diff)+spec*0.15;
+      float bV=blobSDF(s), cV=cutSDF(s); bool isCut=(uCutN>0||uActiveOn>0.5)&&(cV>bV-0.02);
+      if(isCut){ colr=vec3(0.12,0.12,0.14)*(0.5+0.7*diff)+spec*0.3; }   // exposed potch (interior)
+      else { float tex=0.5+0.5*fbm(s*4.0+uSeed); vec3 rock=mix(vec3(0.30,0.24,0.17),vec3(0.46,0.38,0.28),tex); colr=rock*(0.45+0.75*diff)+spec*0.15; }
     }
     float rim=pow(1.0-clamp(dot(n,v),0.0,1.0),3.0); colr+=rim*0.05;
+  }
+  // grinding wheel: translucent spinning disc at world y = uPlaneY (where material is removed)
+  if(rdW.y>0.0001){
+    float tw=uPlaneY/rdW.y; vec3 wp=roW+rdW*tw; float rr=length(wp.xz);
+    if(tw>0.0 && rr<uWheelR){
+      float edge=smoothstep(uWheelR,uWheelR-0.10,rr);
+      float ang2=atan(wp.z,wp.x)+uTime*3.0; float spokes=0.5+0.5*sin(ang2*18.0);
+      float front=(!hit||tw<t)?0.34:0.12;
+      vec3 wheelCol=mix(vec3(0.30,0.32,0.38),vec3(0.62,0.64,0.72),spokes*0.4+smoothstep(uWheelR-0.3,uWheelR,rr)*0.6);
+      colr=mix(colr,wheelCol,front*edge);
+    }
   }
   fragColor=vec4(colr,1.0);
 }`;
@@ -134,7 +138,8 @@ const buf=gl.createBuffer();gl.bindBuffer(gl.ARRAY_BUFFER,buf);gl.bufferData(gl.
 const ploc=gl.getAttribLocation(prog,'p');gl.enableVertexAttribArray(ploc);gl.vertexAttribPointer(ploc,2,gl.FLOAT,false,0,0);
 const U=n=>gl.getUniformLocation(prog,n);
 const u={res:U('uRes'),time:U('uTime'),tilt:U('uTilt'),rot:U('uRot'),seed:U('uSeed'),pivot:U('uPivot'),feed:U('uFeed'),
-  hue:U('uHue'),body:U('uBody'),cue:U('uCue'),cuts:U('uCuts'),cutN:U('uCutN'),active:U('uActive'),activeOn:U('uActiveOn'),camZ:U('uCamZ')};
+  hue:U('uHue'),body:U('uBody'),shape:U('uShape'),camZ:U('uCamZ'),planeY:U('uPlaneY'),wheelR:U('uWheelR'),
+  cuts:U('uCuts'),cutN:U('uCutN'),active:U('uActive'),activeOn:U('uActiveOn')};
 
 // ---- JS mirror of the shader noise (for scoring/centroid) ----
 const fr=x=>x-Math.floor(x);
@@ -144,7 +149,7 @@ function jvn(x,y,z){const ix=Math.floor(x),iy=Math.floor(y),iz=Math.floor(z);let
   return L(L(L(c(0,0,0),c(1,0,0),fx),L(c(0,1,0),c(1,1,0),fx),fy),L(L(c(0,0,1),c(1,0,1),fx),L(c(0,1,1),c(1,1,1),fx),fy),fz);}
 function jfbm(x,y,z){let s=0,a=0.5;for(let i=0;i<3;i++){s+=a*jvn(x,y,z);x=x*2.02+1.7;y=y*2.02+1.7;z=z*2.02+1.7;a*=0.5;}return s;}
 
-// ---- per-stone intrinsics (DEC-009 no-duds; mirrors gen.js) ----
+// ---- intrinsics (DEC-009 no-duds; mirrors gen.js) ----
 function makeRng(str){let h=2166136261>>>0;for(let i=0;i<str.length;i++)h=Math.imul(h^str.charCodeAt(i),16777619);let a=h>>>0;
   return ()=>{a|=0;a=(a+0x6d2b79f5)|0;let t=Math.imul(a^(a>>>15),1|a);t=(t+Math.imul(t^(t>>>7),61|t))^t;return((t^(t>>>14))>>>0)/4294967296;};}
 function pick(rng,pairs){let tot=0;for(const p of pairs)tot+=p[1];let x=rng()*tot;for(const p of pairs){if((x-=p[1])<=0)return p[0];}return pairs[pairs.length-1][0];}
@@ -161,7 +166,7 @@ function rollIntrinsics(seedStr){const ri=makeRng(seedStr+':intr');
   const pattern=pick(ri,[['none',45],['pinfire',18],['floral',12],['straw',8],['broad',6],['rolling',5],['ribbon',3],['flagstone',2],['harlequin',1]]);
   return {type,toneN,brightnessB:B,color,pattern,hue:COLOR_HUE[color],colorScore:COLOR_SCORE[color],patternScore:PAT_SCORE[pattern],baseValue:BASE_BY_TYPE[type]};}
 
-// ---- valuation (mirrors EXP-004 / game-mapping §B) ----
+// ---- valuation (game-mapping §B) ----
 const bF=B=>Math.max(0.15,1-(B-1)*0.14), t01=N=>Math.max(0.2,1-(N-1)*0.1);
 function computeValue(face,avgQ,clean,destroyed){ if(face<=0) return 0; const I=intr;
   const b01=bF(I.brightnessB)*avgQ;
@@ -176,32 +181,30 @@ const mv=(M,v)=>[M[0]*v[0]+M[1]*v[1]+M[2]*v[2],M[3]*v[0]+M[4]*v[1]+M[5]*v[2],M[6
 const tr3=M=>[M[0],M[3],M[6],M[1],M[4],M[7],M[2],M[5],M[8]];
 const rotX=a=>{const c=Math.cos(a),s=Math.sin(a);return[1,0,0,0,c,-s,0,s,c];};
 const rotY=a=>{const c=Math.cos(a),s=Math.sin(a);return[c,0,s,0,1,0,-s,0,c];};
+const rotZ=a=>{const c=Math.cos(a),s=Math.sin(a);return[c,-s,0,s,c,0,0,0,1];};
 
 // ---- state ----
-const PLANEY=1.4, MAXFEED=2.8, MAXRATE=1.6, PREF=0.5;
+const PLANEY=1.4, WHEELR=1.7, MAXFEED=2.8, MAXRATE=1.6, PREF=0.5;
 let Rm=mul(rotX(-0.35),rotY(0.6));
-let seed=[0,0,0], intr=null, cuts=[], pivot=[0,0,0];
-let feed=0, cmd=0, padActive=false, needCommit=false, needRecenter=false;
-let cueStrength=0.5;
+let seed=[0,0,0], shape=[1,1,1], intr=null, cuts=[], pivot=[0,0,0];
+let feed=0, cmd=0, padActive=false, needRecenter=false;
 let origBar=1, meanQall=0.5, parVal=0, lastScore={face:0,avgQ:0,clean:1,destroyed:0,you:0};
-let tilt=[0,0], tiltTarget=[0,0], useGyro=false;
-
-function blobJ(x,y,z){return Math.hypot(x,y,z)-(1+0.34*(jfbm(x*1.3+seed[0],y*1.3+seed[1],z*1.3+seed[2])-0.44));}
-function cutJ(x,y,z,incA){let c=-1e9;for(const k of cuts)c=Math.max(c,x*k[0]+y*k[1]+z*k[2]-k[3]);if(incA&&activeOn)c=Math.max(c,x*active[0]+y*active[1]+z*active[2]-active[3]);return c;}
-function mapJ(x,y,z,incA){return Math.max(blobJ(x,y,z),cutJ(x,y,z,incA));}
-function barJ(x,y,z){return Math.abs(jfbm(x*0.9+seed[0]*1.7,y*0.9+seed[1]*1.7,z*0.9+seed[2]*1.7)-0.46)<0.04;}
-function qualJ(x,y,z){return Math.max(0,Math.min(1,0.4+0.5*jfbm(x*0.55+seed[0]*4.0,y*0.55+seed[1]*4.0,z*0.55+seed[2]*4.0)));}
-
+let tilt=[0,0], tiltTarget=[0,0], useGyro=false, camZ=4.2;
 let active=[0,1,0,99], activeOn=false;
 
-function sampleBlobOnly(){ // origBar + meanQall (no cuts)
-  const M=22,lo=-1.45,span=2.9,st=span/(M-1); let n=0,sq=0;
+function blobJ(x,y,z){const qx=x/shape[0],qy=y/shape[1],qz=z/shape[2];const l=Math.hypot(qx,qy,qz);
+  const lump=jfbm(x*1.1+seed[0],y*1.1+seed[1],z*1.1+seed[2])-0.44;
+  const lump2=jfbm(x*2.6+seed[0]*1.4,y*2.6+seed[1]*1.4,z*2.6+seed[2]*1.4)-0.5;
+  return l-(1+0.40*lump+0.15*lump2);}
+function cutJ(x,y,z,incA){let c=-1e9;for(const k of cuts)c=Math.max(c,x*k[0]+y*k[1]+z*k[2]-k[3]);if(incA&&activeOn)c=Math.max(c,x*active[0]+y*active[1]+z*active[2]-active[3]);return c;}
+function mapJ(x,y,z,incA){return Math.max(blobJ(x,y,z),cutJ(x,y,z,incA));}
+function barJ(x,y,z){return Math.abs(jfbm(x*0.9+seed[0]*1.7,y*0.9+seed[1]*1.7,z*0.9+seed[2]*1.7)-0.46)<0.025;}
+function qualJ(x,y,z){return Math.max(0,Math.min(1,0.4+0.5*jfbm(x*0.55+seed[0]*4.0,y*0.55+seed[1]*4.0,z*0.55+seed[2]*4.0)));}
+
+function sampleBlobOnly(){ const M=22,lo=-1.7,span=3.4,st=span/(M-1); let n=0,sq=0;
   for(let i=0;i<M;i++)for(let j=0;j<M;j++)for(let k=0;k<M;k++){const x=lo+i*st,y=lo+j*st,z=lo+k*st;
-    if(blobJ(x,y,z)<0 && barJ(x,y,z)){n++; sq+=qualJ(x,y,z);}}
-  origBar=Math.max(1,n); meanQall=n?sq/n:0.5;
-}
-function sampleSolid(){ // pivot + score (committed cuts only)
-  const M=22,lo=-1.45,span=2.9,st=span/(M-1),surf=st*1.2;
+    if(blobJ(x,y,z)<0 && barJ(x,y,z)){n++; sq+=qualJ(x,y,z);}} origBar=Math.max(1,n); meanQall=n?sq/n:0.5; }
+function sampleSolid(){ const M=22,lo=-1.7,span=3.4,st=span/(M-1),surf=st*1.2;
   let cx=0,cy=0,cz=0,nIn=0,face=0,junk=0,remBar=0,sumQ=0;
   for(let i=0;i<M;i++)for(let j=0;j<M;j++)for(let k=0;k<M;k++){const x=lo+i*st,y=lo+j*st,z=lo+k*st;
     const d=mapJ(x,y,z,false); if(d>=0) continue; cx+=x;cy+=y;cz+=z;nIn++;
@@ -210,9 +213,7 @@ function sampleSolid(){ // pivot + score (committed cuts only)
       if(bar){face++; sumQ+=qualJ(x,y,z);} else if(isCut) junk++; }}
   if(nIn){pivot=[cx/nIn,cy/nIn,cz/nIn];}
   const avgQ=face?sumQ/face:0, clean=(face+junk)?face/(face+junk):1, destroyed=Math.max(0,origBar-remBar);
-  const you=computeValue(face,avgQ,clean,destroyed);
-  lastScore={face,avgQ,clean,destroyed,you}; updateScoreUI();
-}
+  lastScore={face,avgQ,clean,destroyed,you:computeValue(face,avgQ,clean,destroyed)}; updateScoreUI(); }
 
 const $=id=>document.getElementById(id);
 function updateScoreUI(){const s=lastScore;
@@ -221,31 +222,27 @@ function updateScoreUI(){const s=lastScore;
   $('sVal').textContent=s.you; $('sPar').textContent=parVal; $('sPct').textContent=(parVal&&s.face)?'('+Math.round(100*s.you/parVal)+'%)':'';}
 
 function loadStone(seedStr){ seed=[makeRng(seedStr+':a')()*10,makeRng(seedStr+':b')()*10,makeRng(seedStr+':c')()*10];
-  intr=rollIntrinsics(seedStr); cuts=[]; feed=0; cmd=0; activeOn=false; needCommit=false; needRecenter=false;
+  const rs=makeRng(seedStr+':shape'); shape=[0.78+0.55*rs(),0.78+0.55*rs(),0.78+0.55*rs()];
+  intr=rollIntrinsics(seedStr); cuts=[]; feed=0; cmd=0; activeOn=false; needRecenter=false;
   Rm=mul(rotX(-0.35),rotY(0.6));
-  sampleBlobOnly(); const parFace=origBar*0.45; parVal=computeValue(parFace,meanQall,1,0);
-  sampleSolid(); }
+  sampleBlobOnly(); parVal=computeValue(origBar*0.45,meanQall,1,0); sampleSolid(); }
 
 function resize(){const dpr=Math.min(2,devicePixelRatio||1);cv.width=innerWidth*dpr;cv.height=innerHeight*dpr;gl.viewport(0,0,cv.width,cv.height);}
 addEventListener('resize',resize); resize();
 
-// ---- multitouch: rotate / pinch-zoom / twist-roll ----
-let camZ=3.2; // (zoom not wired into shader dist for v1; reserved)
+// ---- multitouch ----
 const ptrs=new Map(); let rotLast=null,lastDist=0,lastAng=0,startDist=0,startAng=0,twoMode=null;
 function twoM(){const a=[...ptrs.values()];const dx=a[1].x-a[0].x,dy=a[1].y-a[0].y;return{dist:Math.hypot(dx,dy)||1,ang:Math.atan2(dy,dx)};}
 function initTwo(){const m=twoM();startDist=lastDist=m.dist;startAng=lastAng=m.ang;twoMode=null;}
-function rollBy(dA){ // roll about view axis (approx world z)
-  Rm=mul(rotZ(dA),Rm);}
-const rotZ=a=>{const c=Math.cos(a),s=Math.sin(a);return[c,-s,0,s,c,0,0,0,1];};
 cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(ptrs.size===1)rotLast=[e.clientX,e.clientY]; else if(ptrs.size===2)initTwo();});
 cv.addEventListener('pointermove',e=>{ if(!ptrs.has(e.pointerId))return; ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(ptrs.size===1){const dx=e.clientX-rotLast[0],dy=e.clientY-rotLast[1];rotLast=[e.clientX,e.clientY];
-    Rm=mul(rotY(dx*0.01),Rm); Rm=mul(rotX(dy*0.01),Rm); if(!useGyro)tiltTarget=[(e.clientX/innerWidth-0.5)*2,-(e.clientY/innerHeight-0.5)*2];}
+    Rm=mul(rotY(-dx*0.01),Rm); Rm=mul(rotX(-dy*0.01),Rm); if(!useGyro)tiltTarget=[(e.clientX/innerWidth-0.5)*2,-(e.clientY/innerHeight-0.5)*2];}
   else if(ptrs.size>=2){const m=twoM();let dA=m.ang-lastAng;if(dA>Math.PI)dA-=6.28318;if(dA<-Math.PI)dA+=6.28318;
     if(!twoMode){const zs=Math.abs(m.dist/startDist-1);let tA=m.ang-startAng;if(tA>Math.PI)tA-=6.28318;if(tA<-Math.PI)tA+=6.28318;
       if(zs>0.06||Math.abs(tA)>0.10)twoMode=(zs*1.4>=Math.abs(tA))?'zoom':'roll';}
-    if(twoMode==='zoom')camZ=Math.max(2.2,Math.min(5.5,camZ*(lastDist/m.dist))); else if(twoMode==='roll')rollBy(dA);
+    if(twoMode==='zoom')camZ=Math.max(2.6,Math.min(7.0,camZ*(lastDist/m.dist))); else if(twoMode==='roll')Rm=mul(rotZ(dA),Rm);
     lastDist=m.dist;lastAng=m.ang;}});
 function endP(e){ptrs.delete(e.pointerId); if(ptrs.size===1){const a=[...ptrs.values()][0];rotLast=[a.x,a.y];} else if(ptrs.size===2)initTwo();}
 cv.addEventListener('pointerup',endP); cv.addEventListener('pointercancel',endP);
@@ -267,7 +264,6 @@ function releaseFeed(){ if(!padActive)return; padActive=false;
   cmd=0; }
 track.addEventListener('pointerup',releaseFeed); track.addEventListener('pointercancel',releaseFeed);
 
-$('cue').oninput=e=>cueStrength=+e.target.value;
 $('replay').onclick=()=>{cuts=[];feed=0;cmd=0;activeOn=false;Rm=mul(rotX(-0.35),rotY(0.6));sampleSolid();};
 $('newStone').onclick=()=>loadStone('rock-'+Math.random().toString(36).slice(2,9));
 
@@ -309,7 +305,8 @@ function frame(now){ const t=(now-t0)/1000, dt=Math.min(0.05,(now-prev)/1000); p
   gl.uniform2f(u.res,cv.width,cv.height); gl.uniform1f(u.time,t); gl.uniform2f(u.tilt,tilt[0],tilt[1]);
   gl.uniformMatrix3fv(u.rot,false,new Float32Array(tr3(Rm))); gl.uniform3f(u.seed,seed[0],seed[1],seed[2]);
   gl.uniform3f(u.pivot,pivot[0],pivot[1],pivot[2]); gl.uniform1f(u.feed,feed);
-  gl.uniform1f(u.hue,intr.hue); gl.uniform1f(u.body,Math.max(0,Math.min(1,1-(intr.toneN-1)/8))); gl.uniform1f(u.cue,cueStrength); gl.uniform1f(u.camZ,camZ);
+  gl.uniform1f(u.hue,intr.hue); gl.uniform1f(u.body,Math.max(0,Math.min(1,1-(intr.toneN-1)/8)));
+  gl.uniform3f(u.shape,shape[0],shape[1],shape[2]); gl.uniform1f(u.camZ,camZ); gl.uniform1f(u.planeY,PLANEY); gl.uniform1f(u.wheelR,WHEELR);
   gl.uniform1i(u.cutN,cuts.length); const flat=new Float32Array(64); for(let i=0;i<cuts.length;i++){flat[i*4]=cuts[i][0];flat[i*4+1]=cuts[i][1];flat[i*4+2]=cuts[i][2];flat[i*4+3]=cuts[i][3];}
   gl.uniform4fv(u.cuts,flat); gl.uniform4f(u.active,active[0],active[1],active[2],active[3]); gl.uniform1f(u.activeOn,activeOn?1:0);
   gl.drawArrays(gl.TRIANGLES,0,3); requestAnimationFrame(frame);
