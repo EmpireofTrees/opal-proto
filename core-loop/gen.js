@@ -63,14 +63,16 @@
       if (d > nod) continue; // empty (outside the nodule)
       const idx = x + N * (y + N * z);
       const depthFromSurf = nod - d;
-      if (depthFromSurf < 1.4) { mat[idx] = SKIN; continue; }
-
       const seam = noise3(x*0.16 + s2[0], y*0.16 + s2[1], z*0.16 + s2[2]);
-      const hw = 0.05 + 0.035 * noise3(x*0.09 + s2[2], y*0.09 + s2[0], z*0.09 + s2[1]);
+      const hw = 0.055 + 0.04 * noise3(x*0.09 + s2[2], y*0.09 + s2[0], z*0.09 + s2[1]);
+      // seam takes priority over skin → the opal OUTCROPS at the surface (DEC-009: visible evidence, no duds)
       if (Math.abs(seam - 0.5) < hw) {
         mat[idx] = OPAL; opalCount++;
         const dh = Math.sqrt((x-hot[0])**2 + (y-hot[1])**2 + (z-hot[2])**2) / R;
-        qual[idx] = Math.max(0, Math.min(1, 0.85 * (1 - dh) + 0.3 * noise3(x*0.2 + s3[0], y*0.2 + s3[1], z*0.2 + s3[2])));
+        // quality floor raised: every opal voxel is a worthwhile gem; the hotspot is the brilliant core
+        qual[idx] = Math.max(0.25, Math.min(1, 0.40 + 0.45 * (1 - dh) + 0.2 * noise3(x*0.2 + s3[0], y*0.2 + s3[1], z*0.2 + s3[2])));
+      } else if (depthFromSurf < 1.4) {
+        mat[idx] = SKIN;
       } else if (depthFromSurf > R * 0.62) {
         mat[idx] = MATRIX;
       } else {
@@ -82,7 +84,7 @@
     const type = weightedPick(ri, [['white', 38], ['crystal', 16], ['ethiopian', 15], ['boulder', 12], ['dark', 12], ['black', 7]]);
     const tr = TONE_BY_TYPE[type];
     const toneN = tr[0] + Math.floor(ri() * (tr[1] - tr[0] + 1));                    // N1..N9
-    const brightnessB = weightedPick(ri, [[1, 3], [2, 7], [3, 14], [4, 24], [5, 26], [6, 18], [7, 8]]); // B1 brilliant..B7 weak
+    const brightnessB = weightedPick(ri, [[1, 5], [2, 15], [3, 24], [4, 26], [5, 18], [6, 9], [7, 3]]); // confirmed gems → mostly B2–B5 bright, B1 exceptional, weak rare
     const color = weightedPick(ri, [['blue', 40], ['green', 28], ['yellow', 14], ['orange', 10], ['purple', 5], ['red', 3]]);
     const pattern = weightedPick(ri, [['none', 45], ['pinfire', 18], ['floral', 12], ['straw', 8], ['broad', 6], ['rolling', 5], ['ribbon', 3], ['flagstone', 2], ['harlequin', 1]]);
 
