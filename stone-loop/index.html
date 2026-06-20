@@ -10,10 +10,10 @@
   html, body { margin: 0; height: 100%; background: #06070a; color: #cfd2d8; overflow: hidden;
     font: 13px/1.4 ui-sans-serif, system-ui, -apple-system, sans-serif; }
   #gl { display: block; width: 100vw; height: 100vh; touch-action: none; }
-  .top { position: fixed; top: 0; left: 0; right: 0; padding: 9px 12px; display: flex; justify-content: space-between; gap: 10px;
+  .top { position: fixed; top: 0; left: 0; right: 0; padding: 9px 96px 9px 12px; display: flex; justify-content: space-between; gap: 10px;
     background: linear-gradient(rgba(0,0,0,0.5), transparent); pointer-events: none; }
   .top b { font-weight: 600; } .top .sub { color: #7d818b; font-size: 11px; }
-  .hud { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  .hud { position: fixed; left: 0; right: 0; bottom: 0; padding: 10px 96px calc(10px + env(safe-area-inset-bottom)) 12px;
     background: linear-gradient(transparent, rgba(0,0,0,0.75)); display: flex; flex-direction: column; gap: 8px; }
   .goal { font-size: 12px; color: #aeb2bb; } .goal b { color: #e6e8ec; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -21,7 +21,7 @@
   button.go { background: #2f4a3a; border-color: #3f6b50; color: #b6f0c8; }
   .score { display: flex; gap: 13px; font-size: 12px; color: #9aa; flex-wrap: wrap; pointer-events: none; }
   .score b { color: #e6e8ec; font-variant-numeric: tabular-nums; } .score .waste { color: #e69090; } .score .opal { color: #c9a6ff; }
-  #feedctl { position: fixed; right: 10px; top: 50%; transform: translateY(-50%);
+  #feedctl { position: fixed; right: 10px; top: 50%; transform: translateY(-50%); z-index: 8;
     width: 76px; height: 54vh; max-height: 430px; display: flex; flex-direction: column; align-items: center; gap: 8px; }
   #feedtrack { position: relative; flex: 1; width: 62px; border-radius: 34px; touch-action: none;
     background: #15171c; border: 1px solid #2a2d35; overflow: hidden; box-shadow: inset 0 0 16px rgba(0,0,0,0.5); }
@@ -39,7 +39,7 @@
 </head>
 <body>
 <canvas id="gl"></canvas>
-<div class="top"><b>EXP-006 — opal core loop (SDF) · <span class="sub">build 20260619-220412</span></b><span class="sub" id="hint">1 finger rotate · 2 fingers pinch/twist · PRESS pad = grind into the wheel</span></div>
+<div class="top"><b>EXP-006 — opal core loop (SDF) · <span class="sub">build 20260619-222115</span></b><span class="sub" id="hint">1 finger rotate · 2 fingers pinch/twist · PRESS pad = grind into the wheel</span></div>
 <button id="enable">📱 Tap to enable tilt (see the fire)</button>
 
 <div id="feedctl">
@@ -136,15 +136,15 @@ void main(){
     }
     float rim=pow(1.0-clamp(dot(n,v),0.0,1.0),3.0); colr+=rim*0.05;
   }
-  // grinding wheel: translucent spinning disc at world y = uPlaneY (where material is removed)
+  // cutting plane: a static translucent disc at world y = uPlaneY (move the stone up into it to grind)
   if(rdW.y>0.0001){
     float tw=uPlaneY/rdW.y; vec3 wp=roW+rdW*tw; float rr=length(wp.xz);
     if(tw>0.0 && rr<uWheelR){
-      float edge=smoothstep(uWheelR,uWheelR-0.10,rr);
-      float ang2=atan(wp.z,wp.x)+uTime*3.0; float spokes=0.5+0.5*sin(ang2*18.0);
-      float front=(!hit||tw<t)?0.34:0.12;
-      vec3 wheelCol=mix(vec3(0.30,0.32,0.38),vec3(0.62,0.64,0.72),spokes*0.4+smoothstep(uWheelR-0.3,uWheelR,rr)*0.6);
-      colr=mix(colr,wheelCol,front*edge);
+      float disc=smoothstep(uWheelR,uWheelR-0.06,rr);
+      float rim=smoothstep(uWheelR-0.16,uWheelR-0.03,rr);
+      float front=(!hit||tw<t)?1.0:0.5;
+      vec3 planeCol=mix(vec3(0.32,0.34,0.40),vec3(0.72,0.74,0.82),rim);
+      colr=mix(colr,planeCol,disc*(0.20+0.5*rim)*front);
     }
   }
   fragColor=vec4(colr,1.0);
@@ -258,11 +258,11 @@ cv.addEventListener('pointerdown',e=>{cv.setPointerCapture(e.pointerId);ptrs.set
   if(ptrs.size===1)rotLast=[e.clientX,e.clientY]; else if(ptrs.size===2)initTwo();});
 cv.addEventListener('pointermove',e=>{ if(!ptrs.has(e.pointerId))return; ptrs.set(e.pointerId,{x:e.clientX,y:e.clientY});
   if(ptrs.size===1){const dx=e.clientX-rotLast[0],dy=e.clientY-rotLast[1];rotLast=[e.clientX,e.clientY];
-    Rm=mul(rotY(-dx*0.01),Rm); Rm=mul(rotX(-dy*0.01),Rm); if(!useGyro)tiltTarget=[(e.clientX/innerWidth-0.5)*2,-(e.clientY/innerHeight-0.5)*2];}
+    Rm=mul(rotY(dx*0.01),Rm); Rm=mul(rotX(dy*0.01),Rm); if(!useGyro)tiltTarget=[(e.clientX/innerWidth-0.5)*2,-(e.clientY/innerHeight-0.5)*2];}
   else if(ptrs.size>=2){const m=twoM();let dA=m.ang-lastAng;if(dA>Math.PI)dA-=6.28318;if(dA<-Math.PI)dA+=6.28318;
     if(!twoMode){const zs=Math.abs(m.dist/startDist-1);let tA=m.ang-startAng;if(tA>Math.PI)tA-=6.28318;if(tA<-Math.PI)tA+=6.28318;
       if(zs>0.06||Math.abs(tA)>0.10)twoMode=(zs*1.4>=Math.abs(tA))?'zoom':'roll';}
-    if(twoMode==='zoom')camZ=Math.max(2.6,Math.min(7.0,camZ*(lastDist/m.dist))); else if(twoMode==='roll')Rm=mul(rotZ(dA),Rm);
+    if(twoMode==='zoom')camZ=Math.max(2.6,Math.min(7.0,camZ*(lastDist/m.dist))); else if(twoMode==='roll')Rm=mul(rotZ(-dA),Rm);
     lastDist=m.dist;lastAng=m.ang;}});
 function endP(e){ptrs.delete(e.pointerId); if(ptrs.size===1){const a=[...ptrs.values()][0];rotLast=[a.x,a.y];} else if(ptrs.size===2)initTwo();}
 cv.addEventListener('pointerup',endP); cv.addEventListener('pointercancel',endP);
