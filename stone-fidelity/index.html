@@ -1,0 +1,203 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>EXP-005 · stone fidelity (SDF)</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #06070a; color: #cfd2d8; overflow: hidden;
+    font: 13px/1.4 ui-sans-serif, system-ui, -apple-system, sans-serif; }
+  #gl { display: block; width: 100vw; height: 100vh; touch-action: none; }
+  .top { position: fixed; top: 0; left: 0; right: 0; padding: 9px 12px; display: flex; justify-content: space-between; gap: 10px;
+    background: linear-gradient(rgba(0,0,0,0.5), transparent); pointer-events: none; }
+  .top b { font-weight: 600; } .top .sub { color: #7d818b; font-size: 11px; }
+  .hud { position: fixed; left: 0; right: 0; bottom: 0; padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+    background: linear-gradient(transparent, rgba(0,0,0,0.72)); display: flex; flex-direction: column; gap: 9px; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+  label.sl { font-size: 11px; color: #9aa; display: flex; align-items: center; gap: 6px; flex: 1 1 200px; }
+  label.sl input { flex: 1; }
+  button { background: #1b1e24; color: #cfd2d8; border: 1px solid #30343c; border-radius: 8px; padding: 9px 13px; font-size: 13px; pointer-events: auto; }
+  button.go { background: #2f4a3a; border-color: #3f6b50; color: #b6f0c8; }
+  #enable { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); padding: 13px 18px; z-index: 5; }
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+<div class="top"><b>EXP-005 — stone fidelity (SDF) · <span class="sub">build 20260619-202621</span></b><span class="sub" id="hint">drag = rotate · slider = cut depth · Commit a flat facet at any angle</span></div>
+<button id="enable">📱 Tap to enable tilt (see the fire)</button>
+<div class="hud">
+  <div class="row">
+    <label class="sl">cut depth <input id="cut" type="range" min="0" max="1" step="0.01" value="0"></label>
+  </div>
+  <div class="row">
+    <button id="commit" class="go">✂ Commit facet</button>
+    <button id="reset">↺ Reset cuts</button>
+    <button id="newStone">＋ New stone</button>
+  </div>
+</div>
+
+<script type="text/javascript">
+const cv = document.getElementById('gl');
+const gl = cv.getContext('webgl2', { antialias: true, alpha: false });
+if (!gl) document.body.innerHTML = '<p style="padding:20px">WebGL2 not available on this device/browser.</p>';
+
+const VERT = `#version 300 es
+in vec2 p; void main(){ gl_Position = vec4(p,0.0,1.0); }`;
+
+const FRAG = `#version 300 es
+precision highp float;
+out vec4 fragColor;
+uniform vec2 uRes; uniform float uTime; uniform vec2 uTilt;
+uniform mat3 uRot; uniform vec3 uSeed;
+uniform vec4 uCuts[16]; uniform int uCutN;
+uniform vec4 uActive; uniform float uActiveOn;
+const float R = 1.0;
+
+float hash(vec3 p){ p=fract(p*0.3183099+0.1); p*=17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
+float vnoise(vec3 x){ vec3 i=floor(x), f=fract(x); f=f*f*(3.0-2.0*f);
+  return mix(mix(mix(hash(i+vec3(0,0,0)),hash(i+vec3(1,0,0)),f.x),
+                 mix(hash(i+vec3(0,1,0)),hash(i+vec3(1,1,0)),f.x),f.y),
+             mix(mix(hash(i+vec3(0,0,1)),hash(i+vec3(1,0,1)),f.x),
+                 mix(hash(i+vec3(0,1,1)),hash(i+vec3(1,1,1)),f.x),f.y),f.z); }
+float fbm(vec3 p){ float s=0.0,a=0.5; for(int i=0;i<3;i++){ s+=a*vnoise(p); p=p*2.02+1.7; a*=0.5; } return s; }
+
+float cutSDF(vec3 p){
+  float c=-1e9;
+  for(int i=0;i<16;i++){ if(i>=uCutN) break; c=max(c, dot(p,uCuts[i].xyz)-uCuts[i].w); }
+  if(uActiveOn>0.5) c=max(c, dot(p,uActive.xyz)-uActive.w);
+  return c;
+}
+float blobSDF(vec3 p){ float lump=fbm(p*1.3+uSeed)-0.44; return length(p)-R*(1.0+0.34*lump); }
+float mapD(vec3 p){ return max(blobSDF(p), cutSDF(p)); }
+vec3 calcNormal(vec3 p){ vec2 e=vec2(0.0022,0.0);
+  return normalize(vec3(mapD(p+e.xyy)-mapD(p-e.xyy), mapD(p+e.yxy)-mapD(p-e.yxy), mapD(p+e.yyx)-mapD(p-e.yyx))); }
+vec3 pal(float t){ return 0.5+0.5*cos(6.28318*(t+vec3(0.0,0.33,0.67))); }
+
+void main(){
+  vec2 uv=(gl_FragCoord.xy-0.5*uRes)/min(uRes.x,uRes.y);
+  vec3 bg=vec3(0.03,0.035,0.045);
+  vec3 roW=vec3(0.0,0.0,3.2), rdW=normalize(vec3(uv,-1.7));
+  mat3 Rt=transpose(uRot);
+  vec3 ro=Rt*roW, rd=Rt*rdW;
+  float t=0.0, d; bool hit=false; vec3 p=ro;
+  for(int i=0;i<90;i++){ p=ro+rd*t; d=mapD(p); if(d<0.0008){hit=true;break;} t+=d*0.6; if(t>6.0) break; }
+  vec3 colr=bg;
+  if(hit){
+    vec3 n=calcNormal(p);
+    float bV=blobSDF(p), cV=cutSDF(p);
+    bool isCut=(uCutN>0||uActiveOn>0.5)&&(cV>bV-0.02);
+    vec3 lW=normalize(vec3(uTilt*1.6+vec2(0.25,0.55),1.1));
+    vec3 l=Rt*lW, v=-rd;
+    float diff=clamp(dot(n,l),0.0,1.0);
+    float spec=pow(clamp(dot(reflect(-l,n),v),0.0,1.0),36.0);
+    if(isCut){
+      float seam=fbm(p*0.9+uSeed*1.7);
+      float barDist=abs(seam-0.46);
+      if(barDist<0.06){
+        float hue=fract(fbm(p*0.6+uSeed*2.3)*1.4);
+        vec3 fdir=normalize(vec3(fbm(p*0.7+1.0)-0.5,fbm(p*0.7+2.0)-0.5,fbm(p*0.7+3.0)-0.5));
+        float ang=dot(reflect(-l,n),v);
+        float shift=dot(n,fdir)+uTilt.x*0.7+uTilt.y*0.4+ang*0.5;
+        vec3 fire=pow(pal(hue+shift*0.6),vec3(0.8));
+        float flash=smoothstep(0.15,1.0,ang)*0.7+0.3;
+        fire*=0.5+1.0*flash;
+        vec3 body=vec3(0.02,0.025,0.035);
+        colr=mix(body,fire,smoothstep(0.06,0.0,barDist));
+        colr=colr*(0.55+0.6*diff)+spec*0.5;
+      } else {
+        colr=vec3(0.12,0.12,0.14)*(0.5+0.7*diff)+spec*0.3;
+      }
+    } else {
+      float tex=0.5+0.5*fbm(p*4.0+uSeed);
+      vec3 rock=mix(vec3(0.30,0.24,0.17),vec3(0.46,0.38,0.28),tex);
+      colr=rock*(0.45+0.75*diff)+spec*0.15;
+    }
+    float rim=pow(1.0-clamp(dot(n,v),0.0,1.0),3.0); colr+=rim*0.05;
+  }
+  fragColor=vec4(colr,1.0);
+}`;
+
+function sh(type, src){ const s=gl.createShader(type); gl.shaderSource(s,src); gl.compileShader(s);
+  if(!gl.getShaderParameter(s,gl.COMPILE_STATUS)) console.error('shader:', gl.getShaderInfoLog(s)); return s; }
+const prog=gl.createProgram();
+gl.attachShader(prog, sh(gl.VERTEX_SHADER,VERT)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER,FRAG));
+gl.linkProgram(prog); if(!gl.getProgramParameter(prog,gl.LINK_STATUS)) console.error('link:', gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+const buf=gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER,buf);
+gl.bufferData(gl.ARRAY_BUFFER,new Float32Array([-1,-1,3,-1,-1,3]),gl.STATIC_DRAW);
+const ploc=gl.getAttribLocation(prog,'p'); gl.enableVertexAttribArray(ploc); gl.vertexAttribPointer(ploc,2,gl.FLOAT,false,0,0);
+const U=n=>gl.getUniformLocation(prog,n);
+const uRes=U('uRes'),uTime=U('uTime'),uTilt=U('uTilt'),uRot=U('uRot'),uSeed=U('uSeed'),
+      uCuts=U('uCuts'),uCutN=U('uCutN'),uActive=U('uActive'),uActiveOn=U('uActiveOn');
+
+// ---- tiny row-major mat3 math ----
+const ident=()=>[1,0,0,0,1,0,0,0,1];
+function mul(A,B){const C=new Array(9);for(let r=0;r<3;r++)for(let c=0;c<3;c++){let s=0;for(let k=0;k<3;k++)s+=A[r*3+k]*B[k*3+c];C[r*3+c]=s;}return C;}
+function mv(M,v){return [M[0]*v[0]+M[1]*v[1]+M[2]*v[2], M[3]*v[0]+M[4]*v[1]+M[5]*v[2], M[6]*v[0]+M[7]*v[1]+M[8]*v[2]];}
+function tr(M){return [M[0],M[3],M[6],M[1],M[4],M[7],M[2],M[5],M[8]];}
+function rotX(a){const c=Math.cos(a),s=Math.sin(a);return [1,0,0,0,c,-s,0,s,c];}
+function rotY(a){const c=Math.cos(a),s=Math.sin(a);return [c,0,s,0,1,0,-s,0,c];}
+
+let Rm=mul(rotX(-0.35),rotY(0.6));   // stone orientation (local→world), row-major
+let cuts=[];                          // each: [nx,ny,nz,c] in local space
+let cutDepth=0;
+let seed=[Math.random()*10, Math.random()*10, Math.random()*10];
+let tilt=[0,0], tiltTarget=[0,0], useGyro=false;
+
+function resize(){const dpr=Math.min(2,devicePixelRatio||1); cv.width=innerWidth*dpr; cv.height=innerHeight*dpr; gl.viewport(0,0,cv.width,cv.height);}
+addEventListener('resize',resize); resize();
+
+// rotate (one finger / mouse drag)
+let down=false,last=null;
+cv.addEventListener('pointerdown',e=>{down=true;last=[e.clientX,e.clientY];cv.setPointerCapture(e.pointerId);});
+cv.addEventListener('pointermove',e=>{ if(!down)return; const dx=e.clientX-last[0],dy=e.clientY-last[1]; last=[e.clientX,e.clientY];
+  Rm=mul(rotY(dx*0.01),Rm); Rm=mul(rotX(dy*0.01),Rm);
+  if(!useGyro) tiltTarget=[(e.clientX/innerWidth-0.5)*2,-(e.clientY/innerHeight-0.5)*2];
+});
+cv.addEventListener('pointerup',()=>down=false);
+cv.addEventListener('pointercancel',()=>down=false);
+
+// gyro tilt → play-of-color
+function onOrient(e){ if(e.gamma==null)return; useGyro=true;
+  tiltTarget=[Math.max(-1,Math.min(1,e.gamma/35)),Math.max(-1,Math.min(1,(e.beta-45)/35))]; }
+const enableBtn=document.getElementById('enable');
+enableBtn.onclick=()=>{ if(typeof DeviceOrientationEvent!=='undefined'&&DeviceOrientationEvent.requestPermission){
+    DeviceOrientationEvent.requestPermission().then(s=>{if(s==='granted')addEventListener('deviceorientation',onOrient);}).catch(()=>{});
+  } else addEventListener('deviceorientation',onOrient);
+  enableBtn.style.display='none'; };
+if(!('ontouchstart' in window)) enableBtn.style.display='none';
+
+// controls
+document.getElementById('cut').oninput=e=>cutDepth=+e.target.value;
+document.getElementById('commit').onclick=()=>{
+  if(cutDepth<=0.01) return;
+  const n=mv(tr(Rm),[0,1,0]);            // world-up in local space
+  const c=1.4 - cutDepth*2.8;
+  cuts.push([n[0],n[1],n[2],c]); if(cuts.length>16) cuts.shift();
+  cutDepth=0; document.getElementById('cut').value=0;
+};
+document.getElementById('reset').onclick=()=>{cuts=[];cutDepth=0;document.getElementById('cut').value=0;};
+document.getElementById('newStone').onclick=()=>{seed=[Math.random()*10,Math.random()*10,Math.random()*10];cuts=[];cutDepth=0;document.getElementById('cut').value=0;};
+
+const t0=performance.now();
+function frame(now){
+  const t=(now-t0)/1000;
+  if(!useGyro && !down){ tiltTarget=[Math.sin(t*0.5)*0.35, Math.cos(t*0.4)*0.25]; }
+  tilt[0]+=(tiltTarget[0]-tilt[0])*0.08; tilt[1]+=(tiltTarget[1]-tilt[1])*0.08;
+  gl.uniform2f(uRes,cv.width,cv.height); gl.uniform1f(uTime,t); gl.uniform2f(uTilt,tilt[0],tilt[1]);
+  gl.uniformMatrix3fv(uRot,false,new Float32Array(tr(Rm)));   // upload column-major (= transpose of row-major)
+  gl.uniform3f(uSeed,seed[0],seed[1],seed[2]);
+  gl.uniform1i(uCutN,cuts.length);
+  const flat=new Float32Array(64); for(let i=0;i<cuts.length;i++){flat[i*4]=cuts[i][0];flat[i*4+1]=cuts[i][1];flat[i*4+2]=cuts[i][2];flat[i*4+3]=cuts[i][3];}
+  gl.uniform4fv(uCuts,flat);
+  if(cutDepth>0.01){ const n=mv(tr(Rm),[0,1,0]); gl.uniform4f(uActive,n[0],n[1],n[2],1.4-cutDepth*2.8); gl.uniform1f(uActiveOn,1.0); }
+  else gl.uniform1f(uActiveOn,0.0);
+  gl.drawArrays(gl.TRIANGLES,0,3);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>
