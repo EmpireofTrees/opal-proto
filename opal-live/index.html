@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+<title>Opal — live (play of colour)</title>
+<style>
+  :root { color-scheme: dark; }
+  html,body { margin:0; background:#0a0a0d; color:#dcdce4;
+    font:14px/1.45 -apple-system,system-ui,sans-serif; -webkit-user-select:none; user-select:none; }
+  .wrap { max-width:560px; margin:0 auto; padding:14px; }
+  h1 { font-size:17px; margin:2px 0; }
+  .hint { color:#8a8a98; font-size:12.5px; margin-bottom:10px; }
+  #stage { position:relative; width:100%; aspect-ratio:1/1; background:#000;
+    border-radius:14px; overflow:hidden; touch-action:none; }
+  canvas { width:100%; height:100%; display:block; }
+  #ms { position:absolute; left:8px; bottom:8px; font-size:11px; color:#9a9aa6;
+    background:#0008; padding:2px 6px; border-radius:6px; }
+  .row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-top:12px; }
+  button, select { background:#1b1b24; color:#dcdce4; border:1px solid #303040;
+    border-radius:9px; padding:8px 11px; font-size:13px; }
+  button:active { background:#2a2a38; }
+  label { font-size:12.5px; color:#b6b6c2; display:flex; align-items:center; gap:6px; }
+  input[type=range] { width:160px; }
+  .seg { color:#8a8a98; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Opal — live</h1>
+  <div class="hint">The same Rust renderer as the game, compiled to WebAssembly. <b>Drag</b> to tilt the stone and watch the play-of-colour move. (CPU path — low-res while dragging, sharpens on release.)</div>
+  <div id="stage">
+    <canvas id="c"></canvas>
+    <div id="ms">loading…</div>
+  </div>
+  <div class="row">
+    <button id="spin">▶ Spin</button>
+    <button id="newstone">New stone</button>
+    <select id="morph">
+      <option value="0">Nobby</option>
+      <option value="1">Seam</option>
+      <option value="2">Boulder</option>
+      <option value="3">Crystal</option>
+      <option value="4">Chip</option>
+    </select>
+    <label><input type="checkbox" id="faced" checked /> faced</label>
+  </div>
+  <div class="row">
+    <label>cut depth <input type="range" id="cut" min="-0.06" max="0.34" step="0.005" value="0.14" /></label>
+    <span class="seg" id="cutval">0.14</span>
+  </div>
+</div>
+
+<script type="module">
+import init, { render } from "./pkg/opal_wasm.js";
+
+const cv = document.getElementById("c");
+const ctx = cv.getContext("2d");
+const off = document.createElement("canvas");
+const octx = off.getContext("2d");
+const DISPLAY = 512;
+cv.width = DISPLAY; cv.height = DISPLAY;
+
+const LOW = 168, HI = 340;
+let ready = false;
+const S = { seed: 0x00A12026, morph: 0, yaw: 0.0, pitch: 0.95, dist: 3.0, cutD: 0.14, faced: true };
+
+function draw(res) {
+  if (!ready) return;
+  const t0 = performance.now();
+  const buf = render(S.seed >>> 0, S.morph, S.yaw, S.pitch, S.dist, S.cutD, S.faced, res, res);
+  off.width = res; off.height = res;
+  octx.putImageData(new ImageData(new Uint8ClampedArray(buf), res, res), 0, 0);
+  ctx.imageSmoothingEnabled = true;
+  ctx.clearRect(0, 0, DISPLAY, DISPLAY);
+  ctx.drawImage(off, 0, 0, DISPLAY, DISPLAY);
+  document.getElementById("ms").textContent = Math.round(performance.now() - t0) + " ms @ " + res + "px";
+}
+
+// drag to rotate
+let drag = false, lx = 0, ly = 0;
+cv.addEventListener("pointerdown", e => { drag = true; lx = e.clientX; ly = e.clientY; cv.setPointerCapture(e.pointerId); });
+cv.addEventListener("pointermove", e => {
+  if (!drag) return;
+  S.yaw += (e.clientX - lx) * 0.012;
+  S.pitch = Math.max(0.18, Math.min(1.45, S.pitch - (e.clientY - ly) * 0.012));
+  lx = e.clientX; ly = e.clientY;
+  draw(LOW);
+});
+window.addEventListener("pointerup", () => { if (drag) { drag = false; draw(HI); } });
+
+// auto-spin
+let spinning = false, raf = 0;
+document.getElementById("spin").addEventListener("click", e => {
+  spinning = !spinning;
+  e.target.textContent = spinning ? "⏸ Stop" : "▶ Spin";
+  if (spinning) {
+    const tick = () => { if (!spinning) return; S.yaw += 0.03; draw(LOW); raf = requestAnimationFrame(tick); };
+    tick();
+  } else { cancelAnimationFrame(raf); draw(HI); }
+});
+
+document.getElementById("newstone").addEventListener("click", () => {
+  S.seed = (Math.random() * 0xffffffff) >>> 0; draw(HI);
+});
+document.getElementById("morph").addEventListener("change", e => { S.morph = +e.target.value; draw(HI); });
+document.getElementById("faced").addEventListener("change", e => { S.faced = e.target.checked; draw(HI); });
+const cut = document.getElementById("cut"), cutval = document.getElementById("cutval");
+cut.addEventListener("input", e => { S.cutD = +e.target.value; cutval.textContent = (+e.target.value).toFixed(3); draw(LOW); });
+cut.addEventListener("change", () => draw(HI));
+
+init().then(() => { ready = true; draw(HI); });
+</script>
+</body>
+</html>
