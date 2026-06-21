@@ -1,0 +1,9 @@
+var_0	grey opal · blue · broad
+var_1	black opal · violet-blue · mixed
+var_2	black opal · blue · broad
+var_3	black opal · blue · mixed
+var_4	dark crystal · yellow-orange · broad
+var_5	black opal · yellow-orange · broad
+var_6	grey crystal · green · pinfire
+var_7	grey crystal · green-yellow · broad
+var_8	grey crystal · yellow-orange · pinfire
