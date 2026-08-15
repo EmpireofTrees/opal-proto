@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  var BUILD = '993bb9b-dirty 2026-08-15 00:28'; // substituted at publish time
+  var BUILD = 'a1526aa 2026-08-15 01:46'; // substituted at publish time
   // Raw handles captured BEFORE the tee wraps console, so say() can echo to the
   // real console without recursing into itself.
   var RAW = {
@@ -39,7 +39,11 @@
     lines.push(line);
     if (lines.length > 600) lines.shift();
     if (body) render();
-    if (!alerted && (kind === 'err' || ALERT.test(text))) {
+    // Godot routes plain WARNING: lines through console.error, so treating every `err` as an
+    // alert makes the badge permanently red and therefore meaningless. Red should mean a real
+    // failure — so warnings only count if their text names one.
+    var real = ALERT.test(text) || (kind === 'err' && !/^\s*WARNING:/.test(text));
+    if (!alerted && real) {
       alerted = true;
       if (btn) { btn.style.background = '#a2202c'; btn.textContent = 'LOG !'; }
     }
