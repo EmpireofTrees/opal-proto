@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  var BUILD = 'c3cea3d 2026-08-15 16:05'; // substituted at publish time
+  var BUILD = 'd3e8575 2026-08-27 20:32'; // substituted at publish time
   // Raw handles captured BEFORE the tee wraps console, so say() can echo to the
   // real console without recursing into itself.
   var RAW = {
