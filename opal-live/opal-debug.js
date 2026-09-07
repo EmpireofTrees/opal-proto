@@ -17,7 +17,7 @@
 (function () {
   'use strict';
 
-  var BUILD = '22674b7 2026-09-06 18:47'; // substituted at publish time
+  var BUILD = '10a43eb 2026-09-06 23:54'; // substituted at publish time
   window.OPAL_BUILD = BUILD; // read by the game for perf telemetry (perf_telemetry.gd)
   // Raw handles captured BEFORE the tee wraps console, so say() can echo to the
   // real console without recursing into itself.
